@@ -6,6 +6,7 @@
     推理教程 stage13（尤其 Part 2）—— 本课就是它的真实版（KV cache 当条件）。
 
 阶段一（train5）训 VLM：看图 → 写 CoC + 生成离散轨迹 token。
+（⚠️ 本课 toy 的序列带 CoC；真实 nav 配置里不带，见 README「CoC 到底在哪」）
 阶段二换一条通路：**VLM 不动**，用它留下的 KV cache 当条件，训一个连续动作的 expert。
 
 模型与数据的定义在共享模块 `toy_stage2.py`（train8 也要用，所以抽出去了）；

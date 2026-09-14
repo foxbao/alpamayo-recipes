@@ -5,6 +5,11 @@
 
 同一件事分三步看，顺序不要跳（先看形状，再看数值，最后看梯度）：
   ① 【对齐】位置 → token → mask → labels → 错一位：先搞清谁监督谁
+⚠️ 本课 toy 的序列里**带了 CoC**（`<cot_start>…<cot_end>`），那是为了讲清机制。
+   但 shipped 的 `nav.yaml` 里 `components_order` **不含 `cot`**——
+   真实 nav 阶段的序列是「图 + 历史轨迹 + 导航指令 + 未来轨迹 token」，没有 CoC。
+   （CoC 能力继承自发布 checkpoint；`cot` 字段在数据里有，但用在 RL 的 reward 上。）
+   详见 README 的「CoC 到底在哪」一节。
   ② 【数值】加不加 mask，loss 差多少
   ③ 【梯度】被屏蔽的位置梯度必须为 0 —— 这才是「不算 loss」的真正含义
 

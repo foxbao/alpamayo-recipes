@@ -3,7 +3,12 @@
 把 train1~3 的三个机制装起来：
   train1: next-token 交叉熵
   train2: 标签掩码（只有该生成的部分算 loss）
-  train3: 两段损失（轨迹段 + 文本段）
+  train3: 两段损失（轨迹段 + 文本段；⚠️ 真实 nav 里没有「文本段」，见 train3 开头）
+⚠️ 本课 toy 的序列里**带了 CoC**（`<cot_start>…<cot_end>`），那是为了讲清机制。
+   但 shipped 的 `nav.yaml` 里 `components_order` **不含 `cot`**——
+   真实 nav 阶段的序列是「图 + 历史轨迹 + 导航指令 + 未来轨迹 token」，没有 CoC。
+   （CoC 能力继承自发布 checkpoint；`cot` 字段在数据里有，但用在 RL 的 reward 上。）
+   详见 README 的「CoC 到底在哪」一节。
 
 再加一个极简的「视觉编码器」，让它真的「看图说话」。
 

@@ -1,15 +1,31 @@
 """train3: 两段损失 —— 为什么 future_traj 和 others 要分开算
 
 真代码（sft_base_model.py:388-407）把损失拆成两段再相加：
-    losses["future_traj"] = 对轨迹 token 求平均
-    losses["others"]      = 对文本 token 求平均
+
+    traj_mask = <i..> 区间 | <traj_future_start> | <traj_future_end>
+    losses["future_traj"] = _compute_next_token_loss(..., traj_mask)
+    labels[traj_mask] = IGNORE_INDEX
+    losses["others"]      = _compute_next_token_loss(..., labels != IGNORE_INDEX)
     outputs.loss = sum(两者)
 
-本课演示：**「分开求平均再相加」和「合起来求平均」在数学上不一样**，
+本课演示：**「分开求平均再相加」和「合起来求平均」在数学上不一样**——
 差别在于「两组 token 的权重」。
+
+⚠️ **机制是真的，但「others = 文本段」只在本课的 toy 里成立**：
+
+    nav.yaml 里 `label_components = ["traj_future"]`，只圈了轨迹区间
+    （`get_label_mask` 按 label_components 划 `<X>_start … <X>_end`）。
+    所以真实 nav 阶段 labels 里只剩轨迹段 + assistant 的 `<|im_end|>`，
+    **others 段实际只有那一个 EOS token**，没有「文本段」。
+
+    「两段各自求平均再相加」这个机制本身没问题——只要 labels 里有两段，
+    它就按两段各自的均值相加。问题在于 nav 的 labels 里只有一段多一点。
+
+    详见 README 的「CoC 到底在哪」一节。
 
 对应真实代码：recipes/alpamayo1_5_sft/models/sft_base_model.py:314 `_compute_next_token_loss`
              :388-407 两段损失的拆分
+             src/alpamayo/utils/get_label_mask.py `get_label_mask`（按 label_components 划区间）
 """
 
 import math

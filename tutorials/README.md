@@ -37,12 +37,20 @@
    │
    ├─ stage1_lingoqa  (sft_stage1_lingoqa.yaml)   模型：TrainableReasoningVLA
    │    数据: LingoQA（VQA 问答）
-   │    目标: 通用「看图说话」——先把视觉语言对齐练好
+   │    组件: [image, question, answer]  ← 只训 answer 段
+   │    目标: 通用「看图回答驾驶问题」——先把视觉语言对齐练好
+   │          ⚠️ answer 用 <answer_start>/<answer_end> 包，**不是 CoC 格式**
    │
    ├─ stage1_nav      (sft_stage1_nav.yaml)       模型：TrainableReasoningVLA
    │    数据: PAI nav + 导航标注
-   │    目标: 驾驶推理（CoC）+ 未来轨迹的离散 token
+   │    组件: [image, traj_history, route, prompt, traj_future]
+   │          用户侧: 图 + 历史轨迹 + 导航指令 + "output the future trajectory."
+   │          助手侧: <traj_future_start> <i..>×128 <traj_future_end>
+   │          ⚠️ **序列里没有 CoC**（见下面「CoC 到底在哪」）
+   │    目标: 未来轨迹的离散 token
    │    损失: next-token 交叉熵（拆成 future_traj / others 两段）
+   │          ⚠️ 本配置下 label_components=["traj_future"]，
+   │             所以 others 段实际只剩 assistant 的 <|im_end|> 一个 token
    │    技巧: lr_multiplier {vlm.model.visual: 0.1}  ← 视觉塔只给 1/10 学习率
    │
    └─ stage2_nav      (sft_stage2_nav.yaml)       模型：TrainableAlpamayoR1
@@ -109,6 +117,58 @@ SFT 阶段一  ──▶   RL   ──▶  SFT 阶段二  ──▶  发布模�
 
 这正是 RL 存在的理由：阶段一已经把 VLM 训到会输出轨迹 token 了，
 但「像真值」≠「开得好」——RL 用 reward 补上这个缺口。
+
+### ★ CoC 到底在哪（一个查过才发现的事实）
+
+**推理时模型确实会先写 CoC 再出轨迹**（推教程 stage13/14 讲的都对）。但——
+**本仓库的这两个 SFT 阶段，训练序列里都没有 CoC。**
+
+`components_order` 决定序列里放哪些组件，而 `build_conversation` 就是按它遍历的：
+
+```python
+# chat_template/r1.py
+for component in components_order:          # ← 只遍历这个列表
+    self._add_component(component=component, ...)
+# 里面是 match component:  case "cot": ...
+# 不在列表里 → 永不匹配 → 永远不放进序列
+```
+
+两个 shipped 配置：
+
+| 阶段 | `components_order` | 有 `cot` 吗 |
+|---|---|---|
+| stage1_lingoqa | `["image", "question", "answer"]` | ❌ |
+| stage1_nav | `["image", "traj_history", "route", "prompt", "traj_future"]` | ❌ |
+
+（`tests/test_recipe_static_contracts.py:170-171` 专门断言了这两个列表）
+
+所以 `stage1_nav` 的**实际序列**是：
+
+```
+system   : "You are a driving assistant that generates safe and accurate actions."
+user     : [图片] [历史轨迹×48] <route_start>…<route_end> "output the future trajectory."
+assistant: <traj_future_start> <i..>×128 <traj_future_end> <|im_end|>
+```
+
+连**系统提示都没提 CoC**。`label_components: ["traj_future"]` 也只圈了轨迹区间，
+所以那「两段损失」里的 `others` 段**实际只剩 assistant 的 `<|im_end|>` 这一个 token**。
+
+**那 CoC 是哪来的？** 两份证据指向同一个答案——**继承自发布 checkpoint**：
+
+1. 本仓库定位是「在已发布模型上继续训」：`from_alpamayo_checkpoint` 的 docstring 写明
+   只加载 checkpoint 里 fine-tuned 的 `vlm.*` 权重
+2. 数据集里**有** `cot` 字段（`pai_nav.py:25`），但它在**RL 的 reward** 里被用
+   （`gt_cot = reference.get("cot", "")`），不是当 SFT 目标
+
+> ⚠️ **一处不确定**：`cot` 的机器**是造好了的**——`components.py:81` 有它的模板串
+> `"output the chain-of-thought reasoning of the driving process"`，也实现了
+> `construct_cot`，`construct_cot` 里还断言「`cot` 在 `components_order` 里时才需要 data 里有 cot」。
+> 所以**可能** NVlabs 内部训练是带 CoC 的，开源配置简化掉了。
+> 但**从仓库内部无法证实**——我不想凭推测下结论。
+>
+> **本教程的处理**：`train1`/`train2`/`train3`/`train5`/`train7` 的 toy 序列里
+> **保留了 CoC**，因为它是讲清「哪些 token 算 loss」的好素材，而且掩码/两段损失的
+> **机制本身是真的**。但请记住：**那是教学装置，不是 nav 的真实序列结构。**
 
 ### Alpamayo 有**两条动作通路**，本教程只讲其中一条
 
