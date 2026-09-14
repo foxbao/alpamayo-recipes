@@ -64,6 +64,29 @@ VOCAB = ["<pad>", "<bos>", "<eos>", "<cot_start>", "<cot_end>",
 V = {t: i for i, t in enumerate(VOCAB)}
 VOCAB_SIZE = len(VOCAB)
 
+# ⚠️ 关于 <i0>/<i1>/<i2>（离散轨迹 token）—— 本教程压缩最狠的一处，必须知道
+#
+# 名字是从真实代码照搬的。真实里它们是 <i0> … <i3999>：
+#     discrete_tokens = [f"<i{v}>" for v in range(self.traj_vocab_size)]   # 4000
+#   （src/alpamayo1_5/models/base_model.py:271；traj_vocab_size=4000）
+#
+# 而且【一条轨迹是 128 个这样的 token】，不是一个：
+#
+#   真实： <traj_future_start>  <i0> <i1> <i2> ... <i127>  <traj_future_end>
+#          每个 <iK> = 一个【量化刻度（bin）】，单独看【没有任何语义】。
+#          算法见 DiscreteTrajectoryTokenizer.encode：
+#            轨迹 → (加速度, 曲率) → 归一化到 [0,1] → ×(num_bins-1) 取整
+#          128 = 64 个 waypoint × 2 维（加速度、曲率）
+#
+#   toy：  <traj_future_start>  <i0>  <traj_future_end>
+#          这里只有 3 个 token，每个直接代表【整条轨迹】：<i0>=左转 <i1>=右转 <i2>=直行
+#
+# ★ 这一课尤其相关：下面 `crop_at` 裁掉的「真值轨迹 token」，真实里就是这 128 个 <iK>。
+#   裁掉它们 = 不让 expert 看到标准答案（本课会实测不裁的后果）。
+#
+# （顺带：这 4000 个 token 正是 RL 那条「离散通路」的载体；发布推理走连续 expert 时，
+#   ExpertLogitsProcessor 会把它们全 mask 成 -inf，生成停在 <traj_future_start>。）
+
 DATA = [
     # (img_idx, CoC 词, 真值轨迹 token, 目标曲率)
     (0, ["turn", "left"], "<i0>", +0.10),
