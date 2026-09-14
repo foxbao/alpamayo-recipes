@@ -160,12 +160,22 @@ assistant: <traj_future_start> <i..>×128 <traj_future_end> <|im_end|>
 2. 数据集里**有** `cot` 字段（`pai_nav.py:25`），但它在**RL 的 reward** 里被用
    （`gt_cot = reference.get("cot", "")`），不是当 SFT 目标
 
-> ⚠️ **一处不确定**：`cot` 的机器**是造好了的**——`components.py:81` 有它的模板串
-> `"output the chain-of-thought reasoning of the driving process"`，也实现了
-> `construct_cot`，`construct_cot` 里还断言「`cot` 在 `components_order` 里时才需要 data 里有 cot」。
-> 所以**可能** NVlabs 内部训练是带 CoC 的，开源配置简化掉了。
-> 但**从仓库内部无法证实**——我不想凭推测下结论。
->
+**为什么这不影响「模型会写 CoC」**：CoC 能力来自发布 checkpoint。
+而且发布推理**明确要求**它输出——`alpamayo1_5/helper.py:104-143`：
+
+```python
+prompt_text = ("output the chain-of-thought reasoning of the driving process, "
+               "then output the future trajectory.")      # ← 明确要 CoC
+...
+{"role": "assistant", "content": [{"type": "text", "text": "<|cot_start|>"}]}  # ← 预热
+```
+
+> **旁证**：既然推理指令里白纸黑字要求「先输出 CoC」，模型也照做——
+> 那它**一定**在某个阶段被训练过这件事。所以基本可以认定：
+> **NVIDIA 的原始训练带 CoC，开源的 recipe 配置简化掉了这一段**
+> （`cot` 的机器造好了却没启用：`components.py:81` 有同样的模板串、
+> `construct_cot` 也实现了）。但这是**旁证而非仓库内的直接证据**，所以标在这里。
+
 > **本教程的处理**：`train1`/`train2`/`train3`/`train5`/`train7` 的 toy 序列里
 > **保留了 CoC**，因为它是讲清「哪些 token 算 loss」的好素材，而且掩码/两段损失的
 > **机制本身是真的**。但请记住：**那是教学装置，不是 nav 的真实序列结构。**
