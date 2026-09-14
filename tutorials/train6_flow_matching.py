@@ -9,10 +9,14 @@ train7（阶段二）要训一个「从噪声去噪出轨迹」的 expert，用�
   标题分别是「向量场采样直觉」和「训练（flow matching）」，可以对读。）
 
 【要解决的问题】
-想让模型输出一条轨迹（64 个 waypoint × 2 维 = 128 个数）。
-「直接回归」不行——见推理教程 stage8：多个合理的未来会被平均成一条不存在的轨迹。
+想让模型输出一条轨迹（64 个 waypoint × 2 维 = 128 个数）。「直接回归」为什么不行？
+—— **本课 ⓪ 用一个双峰实验把它跑出来了**（不是一句话带过）：
+直接回归的 MSE 最优解是【条件均值】，会把「左转」和「右转」平均成一条
+**压根不存在**的轨迹。实测 4000 个样本全长一个样，标准差 0。
+
 Flow matching 的做法是：**别让模型直接输出轨迹，让它输出一个「速度场」**，
-然后从噪声出发、顺着速度场一步一步走过去。
+然后从噪声出发、顺着速度场一步一步走过去。走到哪个峰由【起点】决定。
+（推理教程 stage8 也从另一个角度讲过这件事，可以对读。）
 
 【两步】
 
@@ -27,8 +31,11 @@ Flow matching 的做法是：**别让模型直接输出轨迹，让它输出一�
         x ← x + dt · v_model(x, t)             dt = 1/N_STEPS
         从 t=0 走到 t=1
 
-【本课实测】一维上把 N(0,1) 推到 N(3, 0.5)，看分布真的变了。
-            一维看得清：画不出图也能从均值和标准差看出来。
+【本课实测】
+  ⓪ 双峰数据上对比「直接回归」和 flow matching（为什么必须绕这一圈）
+  ① 一维上把 N(0,1) 推到 N(3, 0.5)，看分布真的变了
+  ② 积分步数不够会怎样、③ 训练和采样的 t 范围必须对齐。
+  一维看得清：画不出图也能从均值和标准差看出来。
 
 【对应 Alpamayo】
     x 就是轨迹动作 (64 waypoint, 2 维)；
@@ -37,7 +44,7 @@ Flow matching 的做法是：**别让模型直接输出轨迹，让它输出一�
 ★ 前置：不需要（本课自足）。想更细地看，推理教程的 stage2 / stage6 讲得更完整；
   本课只讲 train7 用得到的那部分。
 
-【简化】纯 CPU、秒级。一维数据、几十个参数的 MLP。
+【简化】纯 CPU，约 24 秒。一维数据、几十个参数的 MLP。
 """
 
 import math
@@ -46,10 +53,42 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# ★ 限一下线程数。PyTorch 默认会用满所有核，但本课的模型极小，
+#   在【多用户共享的机器】上线程调度开销反而比计算本身还贵：
+#   实测默认 71s → 4 线程 24s。不影响任何数值结果。
+torch.set_num_threads(4)
+
 TARGET_MEAN, TARGET_STD = 3.0, 0.5     # 要学出来的数据分布
 NOISE_MEAN, NOISE_STD = 0.0, 1.0       # 起点（高斯噪声）
 N_STEPS = 20                           # 采样时的积分步数
 N_ITERS = 3000
+
+# ⓪ 的双峰数据：真值只会是这两个位置之一（对应「左转」/「右转」）
+BIMODAL_MODES = (0.0, 10.0)
+
+
+def sample_bimodal(n):
+    """一半 0、一半 10 —— 中间的 5 从来不存在。
+
+    这就是「多峰」：条件相同时，合法答案有多个，且互不相邻。
+    直接回归在这种数据上会输出两峰的平均（5），一个根本不存在的值。
+    """
+    return (torch.rand(n, 1) < 0.5).float() * BIMODAL_MODES[1]
+
+
+class DirectRegressor(nn.Module):
+    """直接回归：条件 → 轨迹（一个数）。MSE 的最优解是条件均值，所以只会输出两峰中点。"""
+
+    def __init__(self, hidden=64):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(1, hidden), nn.SiLU(),
+            nn.Linear(hidden, hidden), nn.SiLU(),
+            nn.Linear(hidden, 1),
+        )
+
+    def forward(self, cond):
+        return self.net(cond)
 
 
 class VelocityMLP(nn.Module):
@@ -105,6 +144,54 @@ def sample(model, n=2000, n_steps=N_STEPS, seed=0):
 
 # ═══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
+    # ── ⓪ 为什么不能直接回归 ──
+    print("=" * 72)
+    print("⓪ 先看【为什么不能直接回归】—— 这一步决定了后面为什么要绕一圈")
+    print("=" * 72)
+    print(f"  造一个双峰数据：真值只会是 {BIMODAL_MODES[0]:.0f} 或 {BIMODAL_MODES[1]:.0f}"
+          f"（各一半），**中间从来不存在**。")
+    print("  对应驾驶：看到路口，真值要么是左转、要么是右转，没有「一半左一半右」。\n")
+
+    reg = DirectRegressor()
+    torch.manual_seed(0)
+    opt_r = torch.optim.Adam(reg.parameters(), lr=3e-3)
+    for _ in range(6000):
+        x1 = sample_bimodal(1024)
+        loss = F.mse_loss(reg(torch.zeros(1024, 1)), x1)   # 条件固定（同一个场景）
+        opt_r.zero_grad(); loss.backward(); opt_r.step()
+    with torch.no_grad():
+        out = reg(torch.zeros(5000, 1))
+    print(f"  【直接回归】输出分布： 均值 {out.mean():.3f}  "
+          f"标准差 {out.std():.2e}  范围 [{out.min():.3f}, {out.max():.3f}]")
+    print(f"  → **每一个样本都一模一样**（标准差 0），全停在 {out.mean():.2f} 附近 ——")
+    print(f"     而 {out.mean():.0f} 这个位置在数据里【根本不存在】。")
+    print("     这就是「条件均值」：MSE 的最优解是 E[x|条件] = (0+10)/2 = 5。")
+    print("     换言之，模型会【非常自信地】输出一个从未出现过的答案。\n")
+
+    fm_model = VelocityMLP(hidden=128)
+    torch.manual_seed(0)
+    opt_f = torch.optim.Adam(fm_model.parameters(), lr=2e-3)
+    for _ in range(6000):
+        x1 = sample_bimodal(256)
+        x0 = torch.randn(256, 1)
+        t = torch.rand(256, 1)
+        x_t = (1 - t) * x0 + t * x1
+        loss = F.mse_loss(fm_model(x_t, t.squeeze(-1)), x1 - x0)
+        opt_f.zero_grad(); loss.backward(); opt_f.step()
+    with torch.no_grad():
+        torch.manual_seed(0)
+        x = torch.randn(4000, 1)
+        for s in range(50):
+            x = x + (1 / 50) * fm_model(x, torch.full((4000,), s / 50))
+    print("  【flow matching】采样出的分布：")
+    for lo, hi in [(-3, 2), (2, 4), (4, 6), (6, 8), (8, 13)]:
+        frac = ((x >= lo) & (x < hi)).float().mean().item()
+        print(f"     [{lo:>3},{hi:>3})  {frac*100:>5.1f}%  {'█' * int(frac * 40)}")
+    print("\n  → 样本**聚在两个峰上**，中间几乎没有。多峰被保住了。")
+    print("     原因：flow matching 不直接输出「答案」，而是学一个【往哪走】的速度场，")
+    print("     至于走到哪个峰，由【起点】决定 —— 起点不同就走到不同的峰。")
+    print("     直接回归做不到这件事：它只能给一个数，注定是两峰的平均。\n")
+
     print("=" * 72)
     print("① 训练目标：构造一条从噪声到数据的直线，让模型预测它的方向")
     print("=" * 72)
