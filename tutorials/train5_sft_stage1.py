@@ -7,7 +7,9 @@
 ⚠️ 本课 toy 的序列里**带了 CoC**（`<cot_start>…<cot_end>`），那是为了讲清机制。
    但 shipped 的 `nav.yaml` 里 `components_order` **不含 `cot`**——
    真实 nav 阶段的序列是「图 + 历史轨迹 + 导航指令 + 未来轨迹 token」，没有 CoC。
-   （CoC 能力继承自发布 checkpoint；`cot` 字段在数据里有，但用在 RL 的 reward 上。）
+   （⚠️ 别推成「本仓库不训 CoC」——Alpamayo **1** 的 recipe 里 CoC 是
+     **opt-in 可选项**（`coc.yaml`），1.5 的 recipe 把这个选项去掉了；
+     发布模型的 CoC 能力来自「开了 CoC 的 Stage 1」。）
    详见 README 的「CoC 到底在哪」一节。
 
 再加一个极简的「视觉编码器」，让它真的「看图说话」。

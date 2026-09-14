@@ -46,7 +46,7 @@
    │    组件: [image, traj_history, route, prompt, traj_future]
    │          用户侧: 图 + 历史轨迹 + 导航指令 + "output the future trajectory."
    │          助手侧: <traj_future_start> <i..>×128 <traj_future_end>
-   │          ⚠️ **序列里没有 CoC**（见下面「CoC 到底在哪」）
+   │          ⚠️ **这个配置里没有 CoC**（1.x 的 recipe 有 opt-in 的 coc.yaml，见下）
    │    目标: 未来轨迹的离散 token
    │    损失: next-token 交叉熵（拆成 future_traj / others 两段）
    │          ⚠️ 本配置下 label_components=["traj_future"]，
@@ -118,31 +118,59 @@ SFT 阶段一  ──▶   RL   ──▶  SFT 阶段二  ──▶  发布模�
 这正是 RL 存在的理由：阶段一已经把 VLM 训到会输出轨迹 token 了，
 但「像真值」≠「开得好」——RL 用 reward 补上这个缺口。
 
-### ★ CoC 到底在哪（一个查过才发现的事实）
+### ★ CoC 到底在哪（**可选项**，默认关，且 1.5 里没有）
 
-**推理时模型确实会先写 CoC 再出轨迹**（推教程 stage13/14 讲的都对）。但——
-**本仓库的这两个 SFT 阶段，训练序列里都没有 CoC。**
+**推理时模型确实会先写 CoC 再出轨迹**（推教程 stage13/14 讲的都对）。
+但训练侧，「CoC 是不是监督目标」**取决于配置**，而这里有个容易踩的坑——
+**仓库里有两个 SFT recipe，情况不一样**。
 
-`components_order` 决定序列里放哪些组件，而 `build_conversation` 就是按它遍历的：
+#### 机制：`components_order` 决定序列里放什么
 
 ```python
-# chat_template/r1.py
+# chat_template/r1.py:build_conversation
 for component in components_order:          # ← 只遍历这个列表
     self._add_component(component=component, ...)
 # 里面是 match component:  case "cot": ...
 # 不在列表里 → 永不匹配 → 永远不放进序列
 ```
 
-两个 shipped 配置：
+#### 两个 recipe 的差别（**这是关键**）
 
-| 阶段 | `components_order` | 有 `cot` 吗 |
+```
+recipes/
+├─ alpamayo1_sft/          ← Alpamayo 1
+│   └─ configs/vla_processor/
+│       ├─ default.yaml    components_order: [image, traj_history, prompt, traj_future]
+│       │                  label_components: [traj_future]                    ← 默认
+│       └─ coc.yaml        components_order: [image, traj_history, prompt, cot, traj_future]
+│                          components_prompt: [cot, traj_future]
+│                          label_components:  [cot, traj_future]              ← opt-in ⭐
+│
+└─ alpamayo1_5_sft/        ← Alpamayo 1.5
+    └─ configs/vla_processor/
+        ├─ default.yaml \ nav.yaml \ vqa.yaml   三个都【没有 cot】
+        └─ （连 coc.yaml 都不存在）              ← 这个选项被去掉了
+```
+
+**所以：**
+
+| | Alpamayo **1** recipe | Alpamayo **1.5** recipe |
 |---|---|---|
-| stage1_lingoqa | `["image", "question", "answer"]` | ❌ |
-| stage1_nav | `["image", "traj_history", "route", "prompt", "traj_future"]` | ❌ |
+| CoC 作为 Stage-1 监督目标 | ✅ **支持，但 opt-in** | ❌ **没有这个选项** |
+| 怎么开 | 把 `default.yaml` 换成 `coc.yaml` 的三个列表 + 数据集侧三件套 | — |
+| 默认值 | **关**（`ENABLE_COC=no`） | — |
 
-（`tests/test_recipe_static_contracts.py:170-171` 专门断言了这两个列表）
+**证据（都在 `alpamayo1_sft/`）**：
+- `README.md:116` `### Stage 1 (CoC reasoning disabled)`
+- `README.md:146` `### Stage 1 (CoC reasoning enabled)`
+- `SKILL.md:92` 把它做成开关，**默认值写的是 `no`**
+- `SKILL.md:352` 「Apply this **only if** `$ENABLE_COC = yes`」——要三处齐全，
+  缺一个就报 `AssertionError: cot not found in data but 'cot' in components_order`
+- `benchmark/run_benchmarks.py:51-56` 有 `no_coc` / `coc` 两组对照实验
 
-所以 `stage1_nav` 的**实际序列**是：
+#### 本教程对应的 1.5 配置（`nav.yaml`）
+
+`stage1_nav` 的**实际序列**（不带 CoC）：
 
 ```
 system   : "You are a driving assistant that generates safe and accurate actions."
@@ -150,18 +178,13 @@ user     : [图片] [历史轨迹×48] <route_start>…<route_end> "output the f
 assistant: <traj_future_start> <i..>×128 <traj_future_end> <|im_end|>
 ```
 
-连**系统提示都没提 CoC**。`label_components: ["traj_future"]` 也只圈了轨迹区间，
-所以那「两段损失」里的 `others` 段**实际只剩 assistant 的 `<|im_end|>` 这一个 token**。
+`components_order` / `label_components` 见上（`tests/test_recipe_static_contracts.py:170-171`
+专门断言了这两个列表）。⚠️ 因为 `label_components: ["traj_future"]` 只圈了轨迹区间，
+那「两段损失」里的 `others` 段**实际只剩 assistant 的 `<|im_end|>` 这一个 token**。
 
-**那 CoC 是哪来的？** 两份证据指向同一个答案——**继承自发布 checkpoint**：
+#### 那发布模型的 CoC 能力是哪来的
 
-1. 本仓库定位是「在已发布模型上继续训」：`from_alpamayo_checkpoint` 的 docstring 写明
-   只加载 checkpoint 里 fine-tuned 的 `vlm.*` 权重
-2. 数据集里**有** `cot` 字段（`pai_nav.py:25`），但它在**RL 的 reward** 里被用
-   （`gt_cot = reference.get("cot", "")`），不是当 SFT 目标
-
-**为什么这不影响「模型会写 CoC」**：CoC 能力来自发布 checkpoint。
-而且发布推理**明确要求**它输出——`alpamayo1_5/helper.py:104-143`：
+发布推理**明确要求**模型输出 CoC，而模型照做——`alpamayo1_5/helper.py:104-143`：
 
 ```python
 prompt_text = ("output the chain-of-thought reasoning of the driving process, "
@@ -170,15 +193,17 @@ prompt_text = ("output the chain-of-thought reasoning of the driving process, "
 {"role": "assistant", "content": [{"type": "text", "text": "<|cot_start|>"}]}  # ← 预热
 ```
 
-> **旁证**：既然推理指令里白纸黑字要求「先输出 CoC」，模型也照做——
-> 那它**一定**在某个阶段被训练过这件事。所以基本可以认定：
-> **NVIDIA 的原始训练带 CoC，开源的 recipe 配置简化掉了这一段**
-> （`cot` 的机器造好了却没启用：`components.py:81` 有同样的模板串、
-> `construct_cot` 也实现了）。但这是**旁证而非仓库内的直接证据**，所以标在这里。
+既然模型能被这个指令驱动，说明**它在某个阶段被训过写 CoC** ——
+而 `alpamayo1_sft` 里的 `coc.yaml` 就是那条路径。也就是说：
+
+> **发布模型是用「开了 CoC 的 Stage 1」训出来的**；1.5 的开源 recipe
+> 只保留了轨迹部分（`coc.yaml` 被去掉），CoC 能力由 checkpoint 继承。
+> （`cot` 的机器还在——`components.py:81` 有模板串 `"output the chain-of-thought
+> reasoning of the driving process"`、`construct_cot` 也实现了——因为它是给 1.x 用的。）
 
 > **本教程的处理**：`train1`/`train2`/`train3`/`train5`/`train7` 的 toy 序列里
 > **保留了 CoC**，因为它是讲清「哪些 token 算 loss」的好素材，而且掩码/两段损失的
-> **机制本身是真的**。但请记住：**那是教学装置，不是 nav 的真实序列结构。**
+> **机制本身是真的**。但请记住：**那是教学装置，1.5 的 nav 序列里没有那一段。**
 
 ### Alpamayo 有**两条动作通路**，本教程只讲其中一条
 
