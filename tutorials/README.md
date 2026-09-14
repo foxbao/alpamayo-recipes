@@ -118,6 +118,65 @@ SFT 阶段一  ──▶   RL   ──▶  SFT 阶段二  ──▶  发布模�
 这正是 RL 存在的理由：阶段一已经把 VLM 训到会输出轨迹 token 了，
 但「像真值」≠「开得好」——RL 用 reward 补上这个缺口。
 
+### ★ 三种监督：同一个 GT 走三条不同的路
+
+**同一个「真值未来轨迹」，三个阶段里去了完全不同的地方**——这张图值得先记住：
+
+```
+                  同一个 GT future trajectory
+                            │
+              ┌─────────────┴─────────────┐
+              │                           │
+              ▼                           ▼
+       trajectory tokenizer          action_space
+              │                           │
+              ▼                           ▼
+       离散 trajectory tokens        连续 action
+              │                           │
+              ▼                           ▼
+        VLM next-token CE          flow-matching MSE
+          （Stage 1）                  （Stage 2）
+
+   ── RL 走的是另一条路：GT 不产生 loss，只产生 reward ──
+
+       model rollout  →  predicted trajectory + CoT
+                                ↓
+                reward（ADE + comfort + reasoning）
+                                ↓
+                     advantage  →  GRPO loss
+```
+
+对照表（**这是本教程最值得记的一张**）：
+
+| | **Stage 1**（VLM） | **Stage 2**（expert） | **RL**（VLM） |
+|---|---|---|---|
+| **训练对象** | VLM | action expert | VLM policy |
+| **轨迹表示** | 离散 token | 连续 action `(accel, κ)` | 离散 token（**rollout 出来**） |
+| **GT 未来轨迹的去向** | `tokenize_future_trajectory` 后当 **label** | `traj_to_action` 后当**回归目标** | 只用来**算 reward** |
+| **GT CoC 的去向** | ⚠️ **只在 opt-in 的 `coc` 变体里**当 label（默认关，1.5 无此选项） | 不参与 | reasoning reward（Lingo-Judge） |
+| **Loss 来源** | next-token 交叉熵 | flow-matching MSE | GRPO policy loss |
+| **直接和 GT 比较？** | ✅ | ✅ | ❌ |
+| **要 rollout？** | ❌ | ❌ | ✅ |
+| **要 reward？** | ❌ | ❌ | ✅ |
+| **梯度从哪来** | CE → backprop | FM MSE → backprop | reward → advantage → GRPO → backprop |
+
+★ **最该记住的一条**：
+
+> **Stage 1 / Stage 2 是「真值 → loss」；RL 是「真值 → reward → loss」。**
+>
+> RL 里**没有一个 token-level 的「正确答案」**——只有「这一整条 rollout 好不好」。
+> 这就是为什么 RL 必须用 score function 估计量（见 rl1），
+> 也是为什么它需要「一组」采样来比较（组内归一化）。
+
+代码位置（都在 `recipes/alpamayo1_5_sft/models/`）：
+
+| 阶段 | 关键行 |
+|---|---|
+| Stage 1 的 GT → token | `sft_base_model.py:43` `tokenize_future_trajectory` |
+| Stage 1 的 loss | `sft_base_model.py:315` `_compute_next_token_loss`，`:388-407` 两段拆分 |
+| Stage 2 的 GT → action | `sft_alpamayo_r1.py:95` `traj_to_action` → `:102` `construct_training_data` |
+| Stage 2 的 loss | `sft_alpamayo_r1.py:204` `compute_loss_from_pred`（flow matching） |
+
 ### ★ CoC 到底在哪（**可选项**，默认关，且 1.5 里没有）
 
 **推理时模型确实会先写 CoC 再出轨迹**（推教程 stage13/14 讲的都对）。
