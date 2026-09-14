@@ -10,6 +10,58 @@
 
 ---
 
+## ⚠️ 开始之前：本教程引用了**两个不同的仓库**
+
+本教程会反复引用另一个仓库 `alpamayo1.5`。**它和本仓库不在同一棵树里**，
+需要**分别 clone**，并建议放在**同一个父目录下**：
+
+```
+你放代码的地方/
+├─ alpamayo1.5/                    ← 另一个仓库（模型 + 推理教程）
+│   ├─ src/alpamayo1_5/            ← 模型本体（`src/alpamayo1_5/...` 开头的引用在这）
+│   └─ tutorials/                  ← 推理教程 stage0~15（本教程的前置）
+│
+└─ alpamayo-recipes/               ← 本仓库
+    ├─ recipes/alpamayo1_5_sft/    ← 训练配置（训练教程的主线）
+    ├─ src/alpamayo/               ← 数据 / processor / chat_template / utils
+    └─ tutorials/                  ← 👈 你正在读的这个训练教程
+```
+
+**路径约定（读本教程时请按这个理解）**：
+
+⚠️ **两个仓库都有 `src/` 目录**，靠**子包名**区分：
+
+| 路径开头 | 在哪个仓库 | 例子 |
+|---|---|---|
+| `src/alpamayo1_5/...` | **`alpamayo1.5`** | `src/alpamayo1_5/models/base_model.py:292` |
+| `src/alpamayo/...` | **本仓库** | `src/alpamayo/utils/get_label_mask.py` |
+| `recipes/...` | **本仓库** | `recipes/alpamayo1_5_sft/models/sft_base_model.py:315` |
+
+两个仓库的 `src/` 各存各的：
+
+```
+alpamayo1.5/src/          →  alpamayo1_5/     （模型本体）
+alpamayo-recipes/src/     →  alpamayo/        （数据 / processor / chat_template / utils）
+```
+
+⚠️ **三个长得很像的名字，指的是三个不同的东西**——别混：
+
+| 名字 | 是什么 |
+|---|---|
+| `alpamayo1.5/` | 另一个**仓库**的根目录 |
+| `alpamayo1_5/` | 上面那个仓库里的 **python 包**目录（即 `src/alpamayo1_5/`） |
+| `recipes/alpamayo1_5_sft/` | **本仓库内**的训练配置目录 |
+
+以 `/home/you/code/` 为例：
+
+```
+src/alpamayo1_5/models/base_model.py:292   →  /home/you/code/alpamayo1.5/src/alpamayo1_5/models/base_model.py
+src/alpamayo/utils/get_label_mask.py       →  /home/you/code/alpamayo-recipes/src/alpamayo/utils/get_label_mask.py
+recipes/alpamayo1_5_sft/models/…           →  /home/you/code/alpamayo-recipes/recipes/alpamayo1_5_sft/models/…
+```
+
+---
+
 ## ⚠️ 命名说明（避免混淆）
 
 有三个「stage」容易混，本教程统一约定：
@@ -380,7 +432,7 @@ SFT 的 loss 里根本没有「好不好」这一项。RL 就是把 reward 变�
 | 轨迹 token 融进序列 | `sft_base_model.py` `fuse_traj_tokens` / `tokenize_history_trajectory` |
 | **轨迹量化成 token** | `src/alpamayo1_5/action_space/discrete_action_space.py:47` `DiscreteTrajectoryTokenizer.encode`（train4；toy 版是 `toy_traj_tokens.py`） |
 | 造 `<i0>`…`<i3999>` 词表 | `src/alpamayo1_5/models/base_model.py:271`（train4） |
-| 推理时屏蔽这些 token | `src/alpamayo1_5/models/alpamayo1_5.py:44` `ExpertLogitsProcessor`（train4） |
+| 推理时屏蔽这些 token | `src/alpamayo1_5/models/alpamayo1_5.py:48` `ExpertLogitsProcessor`（train4） |
 | 阶段二（冻结 + expert） | `recipes/alpamayo1_5_sft/models/sft_alpamayo_r1.py:125` `forward` |
 | 阶段二的 cache 裁剪 | 同文件 `kv_cache.crop(last_traj_future_start_idx)` |
 | `cotrain_vlm` / `stop_grad_from_vlm` | 同文件 `__init__`（默认 `False` / `True`） |
