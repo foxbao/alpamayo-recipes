@@ -20,79 +20,106 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import toy_traj_tokens as T
+
 IGNORE_INDEX = -100
 HIDDEN = 32
 IMG_DIM = 3          # 图片特征维度（3 种场景各一个 one-hot）
 
-VOCAB = ["<pad>", "<bos>", "<eos>", "<cot_start>", "<cot_end>",
-         "<traj_start>", "<traj_end>", "<i0>", "<i1>", "<i2>",
-         "turn", "left", "right", "go", "straight"]
+# 词表 = 固定 token + **64 个轨迹 bin token**（<i0> … <i63>）
+# 轨迹 token 是程序生成的，和真实一样：
+#     discrete_tokens = [f"<i{v}>" for v in range(self.traj_vocab_size)]
+VOCAB = (["<pad>", "<bos>", "<eos>", "<cot_start>", "<cot_end>",
+          "<traj_start>", "<traj_end>",
+          "turn", "left", "right", "go", "straight"]
+         + T.bin_names())
 V = {t: i for i, t in enumerate(VOCAB)}
 VOCAB_SIZE = len(VOCAB)
 
-# ⚠️ 关于 <i0>/<i1>/<i2>（离散轨迹 token）—— 本教程压缩最狠的一处，必须知道
+# ⚠️ 关于 <iK>（离散轨迹 token）—— 本教程压缩最狠的一处，必须知道
 #
 # 名字是从真实代码照搬的。真实里它们是 <i0> … <i3999>：
 #     discrete_tokens = [f"<i{v}>" for v in range(self.traj_vocab_size)]   # 4000
-#     tokenizer.traj_token_start_idx = convert_tokens_to_ids("<i0>")
-#   （src/alpamayo1_5/models/base_model.py:271；traj_vocab_size=4000）
+#   （src/alpamayo1_5/models/base_model.py:271；release config 里 num_bins=3000）
 #
-# 而且【一条轨迹是 128 个这样的 token】，不是一个：
+# 关键：**一条轨迹是一串 token，不是一个**。而且每个 <iK> 是一个【量化刻度（bin）】，
+# 单独看【没有任何语义】。量化就四步（见 train9_quantize.py，本文件也用同一套）：
+#     轨迹 → (加速度, 曲率) → 归一化 → ×(num_bins-1) → round
 #
-#   真实： <traj_future_start>  <i0> <i1> <i2> ... <i127>  <traj_future_end>
-#          每个 <iK> = 一个【量化刻度（bin）】，单独看【没有任何语义】。
-#          算法见 DiscreteTrajectoryTokenizer.encode：
-#            轨迹 → (加速度, 曲率) → 归一化到 [0,1] → ×(num_bins-1) 取整
-#          128 = 64 个 waypoint × 2 维（加速度、曲率）
+#   真实： <traj_future_start>  <i0> <i1> ... <i127>  <traj_future_end>
+#          128 = 64 个 waypoint × 2 维（加速度、曲率），num_bins = 3000
 #
-#   toy：  <traj_future_start>  <i0>  <traj_future_end>
-#          这里只有 3 个 token，每个直接代表【整条轨迹】：<i0>=左转 <i1>=右转 <i2>=直行
+#   toy：  <traj_start>  <i32> <i41> <i32> <i41> ...  <traj_end>
+#          16 = 8 个 waypoint × 2 维，num_bins = 64
+#          左转 κ=+0.10 → <i32> <i41> 重复；右转 → <i32> <i22>；直行 → 全是 <i32>
 #
-# 也就是同时压掉了两件事：**4000 个 bin → 3 个类别**、**128 token/轨迹 → 1 token/轨迹**。
-# 关键后果：真实里 <i42> 单看啥也不是，含义完全由那 128 个 token 的【序列】承载；
-#           toy 里 <i0> 自带人类语义。读真实代码时别把这个直觉带过去。
+# 所以「<i32> 是左转」这种说法是错的——三个场景的第一个 token 都是 <i32>（accel 都是 0）。
+# 含义在【整串】里，不在单个 token 上。
 #
-# （顺带：这 4000 个 token 正是 RL 那条「离散通路」的载体；发布推理走连续 expert 时，
+# （顺带：这 3000 个 token 正是 RL 那条「离散通路」的载体；发布推理走连续 expert 时，
 #   ExpertLogitsProcessor 会把它们全 mask 成 -inf，生成停在 <traj_future_start>。）
 
-# ---- 数据集：3 个"场景"，每个 = (图片, CoC 文本, 离散轨迹 token) ----
-# 图片用 one-hot 表示"看到什么"；轨迹 token <i0>/<i1>/<i2> 代表左/右/直
+# ---- 数据集：3 个"场景"，每个 = (图片, CoC 文本, 目标曲率) ----
+# 图片用 one-hot 表示"看到什么"；轨迹不是「一个 token」，而是由 (accel, κ) 量化出来的
+# 一串 token（见下面 make_traj_tokens 和 train9_quantize.py）。
 DATA = [
-    # (img_idx, cot 词, traj token)
-    (0, ["turn", "left"], "<i0>"),        # 看到左转场景 -> 左转
-    (1, ["turn", "right"], "<i1>"),       # 右转场景
-    (2, ["go", "straight"], "<i2>"),      # 直行场景
+    # (img_idx, cot 词, 目标 κ)
+    (0, ["turn", "left"], +0.10),         # 看到左转场景 -> 左转
+    (1, ["turn", "right"], -0.10),        # 右转场景
+    (2, ["go", "straight"], 0.00),        # 直行场景
 ]
 
 
-def make_sample(img_idx, cot_words, traj_tok):
+def make_traj_tokens(kappa):
+    """把这个场景的整条轨迹量化成 token 序列 —— 就是 train9 讲的那件事。
+
+    动作 = 每个 waypoint 的 (加速度=0, 曲率=kappa) → 走真实的四步
+    （归一化 → ×(num_bins-1) → round → clamp）→ 得到 TOKENS_PER_TRAJ 个 token。
+
+    toy：8 waypoint × 2 维 = 16 个 token；真实：64 × 2 = 128 个。
+
+    ⚠️ 注意最后要 +V["<i0>"]：`T.encode` 返回的是【bin 号 0…63】，
+       而词表里 `<i0>` 并不在下标 0（前面还有 12 个固定 token）。
+       真实代码里这一步叫 `tokenizer.traj_token_start_idx`，就是这个偏移量。
+    """
+    action = torch.zeros(1, T.N_WAYPOINTS, 2)
+    action[0, :, 1] = kappa
+    return T.encode(action)[0] + V["<i0>"]    # bin 号 → 词表 id
+
+
+def make_sample(img_idx, cot_words, kappa):
     """把一个场景拼成一条训练样本。三个入参就是 `DATA` 里的那个 tuple（调用处用 `*d` 拆开）。
 
-    拼出来的序列（以样本 0 为例）：
-        <bos> <cot_start>  turn   left  <cot_end> <traj_start> <i0> <traj_end> <eos>
-        固定     固定      └── 变 ──┘    固定        固定      └变┘    固定     固定
-                            ↑ CoC 文本                          ↑ 轨迹 token
+    拼出来的序列（以样本 0 为例，轨迹有 16 个 token）：
+        <bos> <cot_start> turn left <cot_end> <traj_start> <i32> <i41> ... <i41> <traj_end> <eos>
+        固定     固定     └─变─┘    固定       固定        └────── 变（16 个）──────┘  固定  固定
+                          ↑ CoC 文本                        ↑ 轨迹 token 序列
 
     三个样本**只有这两处不同**，而且两者是【人为配对】的
-    （左转图 ↔ `turn left` ↔ `<i0>`）—— 模型得自己学会这个对应关系。
+    （左转图 ↔ `turn left` ↔ 这 16 个 token）—— 模型得自己学会这个对应关系。
 
     返回 3 个东西，作用完全不同，这也是这个函数看着绕的原因：
-        [0] ids : torch 张量 (9,)  —— 真的喂给模型（走 `embed`）
-        [1] img : torch 张量 (3,)  —— 图片的 one-hot，真的喂给模型（走 `img_proj`）
-        [2] seq : list[str]        —— **不是张量**，只在最后打印 / 比对答案时用
+        [0] ids : torch 张量 (1+4+2+16+2,) —— 真的喂给模型（走 `embed`）
+        [1] img : torch 张量 (3,)          —— 图片的 one-hot，真的喂给模型（走 `img_proj`）
+        [2] seq : list[str]                —— **不是张量**，只在最后打印 / 比对答案时用
 
-    ⚠️ 模型里序列的【真实长相】见 `TinyVLM.forward`：transformer 收到的是 **10 个位置**
-       —— 图片被拼在最前面 ——
-            位置：   0       1          2          3     4    ...
-                   [IMG]  [<bos>]  [<cot_start>]  turn  left  ...
-        `head` 输出时做了 `x[:, 1:, :]`，把图片那一格切掉 → 剩 9 个 logits。
-        切完才能和 `input_ids` 的 9 个 token 一一对齐，「错一位」才错得对。
+    ⚠️ 模型里序列的【真实长相】见 `TinyVLM.forward`：transformer 收到的位置比
+       `input_ids` **多一个** —— 图片被拼在最前面 ——
+            位置：   0       1          2          3    ...
+                   [IMG]  [<bos>]  [<cot_start>]  turn  ...
+        `head` 输出时做了 `x[:, 1:, :]`，把图片那一格切掉，剩下的才和 `input_ids`
+        一一对齐。切完才能「错一位」错得对。
     """
-    seq = (["<bos>", "<cot_start>"] + cot_words + ["<cot_end>",
-           "<traj_start>", traj_tok, "<traj_end>", "<eos>"])
+    traj_ids = make_traj_tokens(kappa)
+    head = [V["<bos>"], V["<cot_start>"], *[V[w] for w in cot_words], V["<cot_end>"],
+            V["<traj_start>"]]
+    ids = torch.cat([torch.tensor(head), traj_ids,
+                     torch.tensor([V["<traj_end>"], V["<eos>"]])])
+    seq = ([VOCAB[i] for i in head] + [VOCAB[i] for i in traj_ids]
+           + ["<traj_end>", "<eos>"])
     img = torch.zeros(IMG_DIM)
     img[img_idx] = 1.0
-    return (torch.tensor([V[t] for t in seq]), img, seq)
+    return ids, img, seq
 
 
 class CausalBlock(nn.Module):
@@ -167,8 +194,12 @@ def compute_loss(model, input_ids, img_feat):
 
 
 @torch.no_grad()
-def generate(model, img_feat, n_new=8):
-    """给一张图 + <bos>，自回归生成后面的 token。"""
+def generate(model, img_feat, n_new):
+    """给一张图 + <bos>，自回归生成后面 n_new 个 token。
+
+    `n_new` 就是序列剩余长度（这里序列长 24，所以要生成 23 个）——
+    等于 train1 里那句「每次只喂已生成的，预测下一个」。
+    """
     ids = torch.tensor([[V["<bos>"]]])
     model.eval()
     for _ in range(n_new):
@@ -201,7 +232,7 @@ if __name__ == "__main__":
 
     print("\n训练后：给每张图，让模型自己生成完整回答：")
     for i, (name, seq) in enumerate(zip(["左转场景", "右转场景", "直行场景"], seqs)):
-        gen = generate(model, img_feats[i : i + 1])
+        gen = generate(model, img_feats[i : i + 1], n_new=len(seq) - 1)
         ok = "✓" if gen[: len(seq)] == seq else "✗"
         print(f"\n  {name}:")
         print(f"    生成: {' '.join(gen)}")

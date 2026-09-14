@@ -88,14 +88,19 @@ SFT stage1 (VLM) → RL (VLM + 离散轨迹) → SFT stage2 (expert 重新随机
 | 6 | `train6_curriculum.py` | **三段课程与训练技巧**：LingoQA 为什么在前、`lr_multiplier` 视觉塔 0.1、checkpoint 交接 ✅ |
 | 7 | `train7_memory.py` | 显存与分布式：显存花在哪、ZeRO 1/2/3、为什么 stage2 不用 DeepSpeed ✅ |
 | 8 | `train8_real_code.py` | 逐行对照真实代码（把 1~7 的机制映射到行号）✅ |
+| 9 | `train9_quantize.py` | **补课**：轨迹怎么量化成一串 token（`<iK>` 到底是什么）✅ |
 
 > `train1~4` 是**导入**（先讲清损失长什么样），`train5` 是**关键一跳**（阶段二怎么接上），
-> `train6~7` 是**工程**（课程设计、跑得动吗），`train8` 收口。
+> `train6~7` 是**工程**（课程设计、跑得动吗），`train8` 收口，
+> `train9` 是**补课**（建议在 train4 前后读，不读会误以为 `<iK>` 是个类别标签）。
+
+**共享模块**：`toy_traj_tokens.py` —— 玩具版离散轨迹 tokenizer（镜像真实的
+`DiscreteTrajectoryTokenizer`），`train4` / `train5` / `train9` 都用它。
 
 **后续轨道（尚未开始）**：`rl1_grpo.py` / `rl2_reward.py` / `rl3_real_code.py` ——
 只讲 GRPO 算法层与 Alpamayo 的 reward 设计，不碰 Cosmos-RL 那套基础设施。
 
-> 每课都能独立运行（纯 CPU、秒级），重点看**张量 shape 和数值变化**。
+> 每课都能独立运行（纯 CPU，单课 2~20 秒），重点看**张量 shape 和数值变化**。
 
 **复习题**：跑完一课做一遍 `REVIEW.md` 里对应的题（题目在上、答案折叠在文末），
 比再读一遍代码管用。
@@ -109,6 +114,9 @@ SFT stage1 (VLM) → RL (VLM + 离散轨迹) → SFT stage2 (expert 重新随机
 | `<eos>` 也监督 | 同文件的 `get_role_eos_mask` / `get_assistant_mask`（注释：*include the eos (+1) for supervision*） |
 | 两段损失 | `sft_base_model.py:388-407`（`future_traj` / `others`） |
 | 轨迹 token 融进序列 | `sft_base_model.py` `fuse_traj_tokens` / `tokenize_history_trajectory` |
+| **轨迹量化成 token** | `src/alpamayo1_5/action_space/discrete_action_space.py:47` `DiscreteTrajectoryTokenizer.encode`（train9；toy 版是 `toy_traj_tokens.py`） |
+| 造 `<i0>`…`<i3999>` 词表 | `src/alpamayo1_5/models/base_model.py:271`（train9） |
+| 推理时屏蔽这些 token | `src/alpamayo1_5/models/alpamayo1_5.py:44` `ExpertLogitsProcessor`（train9） |
 | 阶段二（冻结 + expert） | `recipes/alpamayo1_5_sft/models/sft_alpamayo_r1.py:125` `forward` |
 | 阶段二的 cache 裁剪 | 同文件 `kv_cache.crop(last_traj_future_start_idx)` |
 | `cotrain_vlm` / `stop_grad_from_vlm` | 同文件 `__init__`（默认 `False` / `True`） |

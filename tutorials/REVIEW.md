@@ -235,9 +235,10 @@ train3 是把一条序列切成两段；stage13 是把两种完全不同的损�
 `get_label_mask` 按 `{label}_start`/`{label}_end` 划**区间**（train2 对应这套），
 `get_assistant_mask` 单独管 assistant 回复里的 `<eos>`（train4 补上这套）。
 
-**4-2** 图片是**额外拼在最前面**的，`input_ids` 是 9 个 token。
-**不切的话** `head(x)` 给出 **10 个** logits，而 `labels` 只有 9 个：
-`logits[:, :-1]` → 9 个，`labels[:, 1:]` → 8 个，**「错一位」直接崩掉**。
+**4-2** 图片是**额外拼在最前面**的，`input_ids` 有 L 个 token（现在是 24，
+因为轨迹是 16 个 token 而不是 1 个）。
+**不切的话** `head(x)` 给出 **L+1 个** logits，而 `labels` 只有 L 个：
+`logits[:, :-1]` → L 个，`labels[:, 1:]` → L-1 个，**「错一位」直接崩掉**。
 
 **为什么可以切**：本质是**图片位置是「输入」，不是「要被预测的东西」**——
 它只有「被看」这一个身份，没有对应的监督目标，输出本来就不该进 loss。

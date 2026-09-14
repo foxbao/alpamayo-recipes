@@ -43,13 +43,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import toy_traj_tokens as T
+
 IGNORE_INDEX = -100
 HIDDEN = 32
 N_LAYERS = 2
 N_HEADS = 2
 IMG_DIM = 3
 ACTION_DIM = 2
-N_WAYPOINTS = 8
+N_WAYPOINTS = T.N_WAYPOINTS
 N_STEPS = 10          # flow matching 的积分步数
 N_SAMPLES = 16        # 评估时每个场景采样几次（单次方差大）
 # 训练规模。★ BATCH_PER_SCENE 比 N_ITERS 重要得多：只有 3 个场景时，一个 batch
@@ -58,53 +60,65 @@ N_SAMPLES = 16        # 评估时每个场景采样几次（单次方差大）
 BATCH_PER_SCENE = 16
 N_ITERS = 500
 
-VOCAB = ["<pad>", "<bos>", "<eos>", "<cot_start>", "<cot_end>",
-         "<traj_future_start>", "<traj_future_end>",
-         "turn", "left", "right", "go", "straight", "<i0>", "<i1>", "<i2>"]
+VOCAB = (["<pad>", "<bos>", "<eos>", "<cot_start>", "<cot_end>",
+          "<traj_future_start>", "<traj_future_end>",
+          "turn", "left", "right", "go", "straight"]
+         + T.bin_names())        # <i0> … <i63>
 V = {t: i for i, t in enumerate(VOCAB)}
 VOCAB_SIZE = len(VOCAB)
 
-# ⚠️ 关于 <i0>/<i1>/<i2>（离散轨迹 token）—— 本教程压缩最狠的一处，必须知道
+# ⚠️ 关于 <iK>（离散轨迹 token）—— 本教程压缩最狠的一处，必须知道
 #
-# 名字是从真实代码照搬的。真实里它们是 <i0> … <i3999>：
-#     discrete_tokens = [f"<i{v}>" for v in range(self.traj_vocab_size)]   # 4000
-#   （src/alpamayo1_5/models/base_model.py:271；traj_vocab_size=4000）
+# 名字是从真实代码照搬的。真实里它们是 <i0> … <i3999>（release config 里 num_bins=3000）：
+#     discrete_tokens = [f"<i{v}>" for v in range(self.traj_vocab_size)]
+#   （src/alpamayo1_5/models/base_model.py:271）
 #
-# 而且【一条轨迹是 128 个这样的 token】，不是一个：
+# 关键：**一条轨迹是一串 token，不是一个**。每个 <iK> 是一个【量化刻度（bin）】，
+# 单独看【没有任何语义】。量化四步见 train9_quantize.py，本文件用同一套。
 #
-#   真实： <traj_future_start>  <i0> <i1> <i2> ... <i127>  <traj_future_end>
-#          每个 <iK> = 一个【量化刻度（bin）】，单独看【没有任何语义】。
-#          算法见 DiscreteTrajectoryTokenizer.encode：
-#            轨迹 → (加速度, 曲率) → 归一化到 [0,1] → ×(num_bins-1) 取整
-#          128 = 64 个 waypoint × 2 维（加速度、曲率）
-#
-#   toy：  <traj_future_start>  <i0>  <traj_future_end>
-#          这里只有 3 个 token，每个直接代表【整条轨迹】：<i0>=左转 <i1>=右转 <i2>=直行
+#   真实： <traj_future_start>  <i0> <i1> ... <i127>  <traj_future_end>
+#          128 = 64 waypoint × 2 维，num_bins = 3000
+#   toy：  <traj_future_start>  <i32> <i41> ...        <traj_future_end>
+#          16 = 8 waypoint × 2 维，num_bins = 64
+#          左转 κ=+0.10 → <i32> <i41> 重复；右转 → <i32> <i22>；直行 → 全是 <i32>
 #
 # ★ 这一课尤其相关：下面 `crop_at` 裁掉的「真值轨迹 token」，真实里就是这 128 个 <iK>。
 #   裁掉它们 = 不让 expert 看到标准答案（本课会实测不裁的后果）。
 #
-# （顺带：这 4000 个 token 正是 RL 那条「离散通路」的载体；发布推理走连续 expert 时，
+# （顺带：这 3000 个 token 正是 RL 那条「离散通路」的载体；发布推理走连续 expert 时，
 #   ExpertLogitsProcessor 会把它们全 mask 成 -inf，生成停在 <traj_future_start>。）
 
 DATA = [
-    # (img_idx, CoC 词, 真值轨迹 token, 目标曲率)
-    (0, ["turn", "left"], "<i0>", +0.10),
-    (1, ["turn", "right"], "<i1>", -0.10),
-    (2, ["go", "straight"], "<i2>", 0.00),
+    # (img_idx, CoC 词, 目标 κ)
+    (0, ["turn", "left"], +0.10),
+    (1, ["turn", "right"], -0.10),
+    (2, ["go", "straight"], 0.00),
 ]
 
 
-def make_sample(img_idx, cot_words, traj_tok, kappa):
-    """拼一条**阶段一风格**的完整序列 —— 注意 `<traj_future_start>` 后面跟着真值轨迹 token。
+def make_sample(img_idx, cot_words, kappa):
+    """拼一条**阶段一风格**的完整序列 —— `<traj_future_start>` 后面跟着【16 个】真值轨迹 token。
 
     这正是阶段二训练时拿到的东西：标签是 teacher forcing 的，未来轨迹就在序列里。
+    真实里这一段有 128 个 token，所以下面 crop 掉的是 128 个答案——不是一个。
+
+    返回 (ids, img, target_action)：
+        target_action 是【把这串 token 解码回来】的动作，也就是 expert 要学的目标。
+        这样「序列里的答案」和「expert 的答案」是同一个东西——真实里也正是如此
+        （VLM 预测的 token 和 expert 回归的动作，描述的是同一条轨迹）。
     """
-    seq = (["<bos>", "<cot_start>"] + cot_words
-           + ["<cot_end>", "<traj_future_start>", traj_tok, "<traj_future_end>", "<eos>"])
+    action = torch.zeros(1, T.N_WAYPOINTS, 2)
+    action[0, :, 1] = kappa
+    traj_ids = T.encode(action)[0] + V["<i0>"]            # bin 号 → 词表 id
+    target_action = T.decode(traj_ids - V["<i0>"])[0]     # 量化后再解码 = 序列里那串的含义
+
+    head = [V["<bos>"], V["<cot_start>"], *[V[w] for w in cot_words],
+            V["<cot_end>"], V["<traj_future_start>"]]
+    ids = torch.cat([torch.tensor(head), traj_ids,
+                     torch.tensor([V["<traj_future_end>"], V["<eos>"]])])
     img = torch.zeros(IMG_DIM)
     img[img_idx] = 1.0
-    return torch.tensor([V[t] for t in seq]), img, torch.tensor(kappa)
+    return ids, img, target_action
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -246,8 +260,12 @@ def train_vlm(model, input_ids, img_feats, n_iters=300, lr=5e-3):
     return loss.item()
 
 
-def train_expert(model, input_ids, img_feats, kappas, crop_at, n_iters=N_ITERS, lr=5e-3):
-    """阶段二：冻结 VLM，只按 flow matching 训 expert。`crop_at=None` 表示不裁（触发泄漏）。"""
+def train_expert(model, input_ids, img_feats, target_actions, crop_at,
+                 n_iters=N_ITERS, lr=5e-3):
+    """阶段二：冻结 VLM，只按 flow matching 训 expert。`crop_at=None` 表示不裁（触发泄漏）。
+
+    `target_actions` 形状 (B, N_WAYPOINTS, 2)，由轨迹 token 解码而来（见 make_sample）。
+    """
     model.vlm.eval()
     for p in model.vlm.parameters():
         p.requires_grad_(model.cotrain_vlm)
@@ -256,12 +274,11 @@ def train_expert(model, input_ids, img_feats, kappas, crop_at, n_iters=N_ITERS, 
     # 这样一步就有 3×BATCH_PER_SCENE 条梯度信号，而不是 3 条。
     ids_t = input_ids.repeat(BATCH_PER_SCENE, 1)
     img_t = img_feats.repeat(BATCH_PER_SCENE, 1)
-    kap_t = kappas.repeat(BATCH_PER_SCENE)
+    act_t = target_actions.repeat(BATCH_PER_SCENE, 1, 1)
     B = ids_t.shape[0]
     tail = []
     for _ in range(n_iters):
-        x1 = torch.zeros(B, N_WAYPOINTS, ACTION_DIM)
-        x1[:, :, 1] = kap_t[:, None]                      # 目标：每步曲率都是 kappa
+        x1 = act_t                                       # 目标 = token 解码出来的动作
         x0 = torch.randn_like(x1)
         t = torch.rand(B)
         x_t = (1 - t[:, None, None]) * x0 + t[:, None, None] * x1
@@ -293,9 +310,10 @@ if __name__ == "__main__":
     samples = [make_sample(*d) for d in DATA]
     input_ids = torch.stack([s[0] for s in samples])          # (3, L)
     img_feats = torch.stack([s[1] for s in samples])          # (3, 3)
-    kappas = torch.stack([s[2] for s in samples])
+    target_actions = torch.stack([s[2] for s in samples])     # (3, 8, 2) 由 token 解码而来
     L = input_ids.shape[1]
-    TARGET = kappas.tolist()
+    # 目标 κ 取解码后动作的最后一维（每个 waypoint 都一样，取第一个即可）
+    TARGET = target_actions[:, 0, 1].tolist()
 
     print("阶段一的完整序列（teacher forcing，`<traj_future_start>` 后面是真值轨迹 token）：")
     for i, (d, ids) in enumerate(zip(DATA, input_ids)):
@@ -322,9 +340,9 @@ if __name__ == "__main__":
     leaky = Stage2Model(cotrain_vlm=False, stop_grad_from_vlm=True)
     leaky.vlm.load_state_dict(model.vlm.state_dict())
 
-    fm_crop = train_expert(model, input_ids, img_feats, kappas, crop_at=CROP_AT)
+    fm_crop = train_expert(model, input_ids, img_feats, target_actions, crop_at=CROP_AT)
     print(f"  ✅ 裁到 <traj_future_start>：末 50 步平均 fm_loss = {fm_crop:.4f}")
-    fm_leak = train_expert(leaky, input_ids, img_feats, kappas, crop_at=None)
+    fm_leak = train_expert(leaky, input_ids, img_feats, target_actions, crop_at=None)
     print(f"  ❌ 不裁（前缀里带真值轨迹 token）：末 50 步平均 fm_loss = {fm_leak:.4f}")
     print("  ⚠️ 注意两个 loss 几乎一样！—— 标签泄漏【不会】让训练 loss 变难看，")
     print("     它只是让 expert 学成「一半看 CoC、一半抄答案」。只有推理条件能暴露它。\n")
@@ -349,24 +367,28 @@ if __name__ == "__main__":
     print("=" * 70)
     print("② 决定性一测：CoC 固定成 'turn left'，只换前缀里的【真值轨迹 token】")
     print("=" * 70)
-    base_seq = input_ids[0, :pos + 1]                     # <bos> ... <traj_future_start>（CoC 固定为 turn left）
+    # CoC 固定成 'turn left'，只换 <traj_future_start> 后面那【整串】16 个轨迹 token
+    base_seq = input_ids[0, :pos + 1]
+    traj_seqs = [input_ids[k, pos + 1:-2] for k in range(3)]   # 三个场景各自的 16 个 token
     fixed_coc = torch.stack([
-        torch.cat([base_seq, torch.tensor([V[tok], V["<traj_future_end>"], V["<eos>"]])])
-        for tok in ["<i0>", "<i1>", "<i2>"]
+        torch.cat([base_seq, traj_seqs[k],
+                   torch.tensor([V["<traj_future_end>"], V["<eos>"]])])
+        for k in range(3)
     ])
     with torch.no_grad():
-        print(f"  {'前缀里的真值 token':<20}{'crop 版':>12}{'不裁版':>12}")
-        for k, (tok, meaning) in enumerate([("<i0>", "左"), ("<i1>", "右"), ("<i2>", "直")]):
+        print(f"  {'前缀里塞的真值轨迹':<26}{'crop 版':>10}{'不裁版':>10}")
+        for k, meaning in enumerate(["左转的 16 个 token", "右转的 16 个 token", "直行的 16 个 token"]):
             c_full = model.vlm(fixed_coc[k:k + 1], img_feats[:1])[1]
             c_crop = [(x.detach(), y.detach()) for x, y in crop_caches(c_full, CROP_AT)]
             c_none = [(x.detach(), y.detach()) for x, y in c_full]
             a = sample_kappa(model.expert, c_crop)
             b = sample_kappa(leaky.expert, c_none)
-            print(f"  {tok}（真值={meaning}）{'':<8}{a:>+12.3f}{b:>+12.3f}")
-    print("  → crop 版：三个数几乎不变（那个位置已经被裁掉了，它只能靠 CoC）")
-    print("     不裁版：喂 <i1>（真值=右）时被拉低 → 它【确实在依赖前缀里的答案】")
+            print(f"  {meaning:<26}{a:>+10.3f}{b:>+10.3f}")
+    print("  → crop 版：三个数几乎不变 —— 那 16 个 token 已经被裁掉了，它只能靠 CoC")
+    print("     不裁版：塞「右转」的 token 时预测被拉低 → 它【确实在读前缀里的答案】")
     print("     这就是 `kv_cache.crop(...)` 存在的理由：训练时前缀里装着标准答案，")
-    print("     expert 会去抄；裁掉它，才逼着 expert 从 CoC 推。\n")
+    print("     expert 会去抄；裁掉它（真实里是 128 个 token），才逼着 expert 从 CoC 推。")
+    print("     ⚠️ 注意「不裁版」是预先训练好的专家 —— 这里只换了前缀的内容。\n")
 
     # ── 条件验证三连（同推理教程 stage4-5 的验法）──
     print("=" * 70)
