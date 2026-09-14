@@ -55,6 +55,61 @@
 
 入口：`recipes/alpamayo1_5_sft/train_hf.py`（Hydra 配置）+ `trainer.py`（HF Trainer 子类）。
 
+### ★ 哪个阶段训哪个部件（别被模型类名绕进去）
+
+上面写了每段的模型**类名**，但光看名字看不出训的是什么。真实情况是：
+
+| 阶段 | config 里的模型类 | 模型里**有 `expert` 吗** | 训什么 | 目标函数 |
+|---|---|---|---|---|
+| **SFT 阶段一** | `TrainableReasoningVLA.from_alpamayo_checkpoint` | ❌ **没有** | **VLM** | next-token 交叉熵 |
+| **RL**（`alpamayo1_x_rl`） | `RLWrapperReasoningVLA` | ❌ 没有 | **VLM** | GRPO（reward） |
+| **SFT 阶段二** | `TrainableAlpamayoR1.from_pretrained` | ✅ 有 | **expert**（VLM 冻结） | flow matching |
+
+证据在类定义上：
+
+```python
+# sft_base_model.py:201 —— 阶段一用的
+class TrainableReasoningVLA(ReasoningVLA, TrajectoryFusionWithFutureMixin):
+                            ↑ ReasoningVLA 里【没有 expert】
+
+# sft_alpamayo_r1.py:33 —— 阶段二用的
+class TrainableAlpamayoR1(AlpamayoR1):
+                            ↑ 有 self.expert（第 192 行用了）
+```
+
+```python
+# src/alpamayo1_5/models/base_model.py:292   ← 只有 VLM
+class ReasoningVLA(PreTrainedModel, TrajectoryFusionMixin):
+
+# src/alpamayo1_5/models/alpamayo1_5.py:82    ← 在它基础上加了 expert
+class Alpamayo1_5(ReasoningVLA):
+    self.expert = AutoModel.from_config(expert_config)     # :105
+```
+
+**要点**：`VLM` 被训**两次**（SFT 阶段一 → RL），`expert` 被训**一次**（SFT 阶段二）。
+
+所以完整的闭环其实是：
+
+```
+              ┌────── 训 VLM ──────┐
+SFT 阶段一  ──▶   RL   ──▶  SFT 阶段二  ──▶  发布模型
+（next-token CE）(GRPO)      （flow matching）
+                            └─ 训 expert ─┘
+                              VLM 冻结，且 expert 是【随机初始化】的
+```
+
+⚠️ **RL 和 SFT 阶段一训的是同一个部件**，差别不在「训谁」而在「怎么训」：
+
+| | SFT 阶段一 | RL |
+|---|---|---|
+| 数据从哪来 | 数据集里的**真值**序列 | **模型自己采样**出来的 |
+| 目标函数 | next-token CE | reward（GRPO） |
+| 在教什么 | 「**像不像**真值」 | 「车**开得好不好**」 |
+| 采样可导吗 | 不需要（有真值） | **不可导** ⟹ 要 score function |
+
+这正是 RL 存在的理由：阶段一已经把 VLM 训到会输出轨迹 token 了，
+但「像真值」≠「开得好」——RL 用 reward 补上这个缺口。
+
 ### Alpamayo 有**两条动作通路**，本教程只讲其中一条
 
 这是读 configs 之前最容易搞错的一件事：
