@@ -1,6 +1,6 @@
 """train8: 三段课程与训练技巧
 
-train5/5 讲的是「一步训练里发生什么」。这一课讲**训练是怎么编排的** ——
+train1~7 讲的是「一步训练里发生什么」。这一课讲**训练是怎么编排的** ——
 内容全部来自 `recipes/alpamayo1_5_sft/configs/` 里那几个 yaml。
 
 三段课程（每段一个 config）：
@@ -8,13 +8,17 @@ train5/5 讲的是「一步训练里发生什么」。这一课讲**训练是怎
     stage1_lingoqa  数据: LingoQA（VQA 问答）
                     components_order: [image, question, answer]
                     label_components: [answer]
-                    → 先建立「看图说话」的视觉-语言对齐
+                    → 先建立「看图回答问题」的视觉-语言对齐
+                      ⚠️ answer 用 <answer_start>/<answer_end> 包，**不是 CoC**
 
     stage1_nav      数据: PAI nav + 导航标注
                     components_order: [image, traj_history, route, prompt, traj_future]
                     label_components: [traj_future]
                     技巧: lr_multiplier {vlm.model.visual: 0.1}
-                    → 学驾驶推理（CoC）+ 未来轨迹的离散 token
+                    → 未来轨迹的离散 token
+                      ⚠️ **这个配置里没有 CoC**（`components_order` 不含 cot）。
+                         推理时模型确实会写 CoC，但那能力来自发布 checkpoint ——
+                         CoC 作为训练目标是【可选项】，见 README「CoC 到底在哪」
 
     stage2_nav      模型: TrainableAlpamayoR1（从 Alpamayo-1.5-10B 起）
                     注入: stage1_vlm_checkpoint_path ← stage1 训出的 VLM
@@ -26,6 +30,22 @@ train5/5 讲的是「一步训练里发生什么」。这一课讲**训练是怎
     ① 同一套权重，两个阶段吃的是【不同形态】的数据（打印两条序列对比）
     ② lr_multiplier 的机制 —— 最长前缀匹配 + 实际 lr（照抄 `trainer.py:58`）
     ③ checkpoint 交接 —— stage1 训出的 VLM 怎么进 stage2
+       ⚠️ 这里是【两条 flow】，别混（见下）
+
+★ checkpoint 交接的两条 flow —— 差别只在「起点含不含 expert」：
+
+    Flow A（stage1 → stage2，即 `stage1_vlm_checkpoint_path`）
+        起点 = nvidia/Alpamayo-1.5-10B      完整模型，【含 expert】
+        动作 = 用 stage1 的 VLM 权重覆盖进去
+        结果 = 新 VLM  +  **发布模型那份 expert**（没被动过）
+
+    Flow B（RL checkpoint → stage2）
+        起点 = RL 导出的 checkpoint          【只有 VLM 权重】
+        动作 = 非严格加载（non-strict）
+        结果 = RL 训的 VLM  +  **随机初始化的 expert**
+
+    → 所以「expert 随机初始化」这句话**只对 Flow B 成立**。
+      别套到 Flow A 上。原文见 alpamayo1_x_rl/README.md:470。
 
 ⚠️ 本课**演示不了**「为什么先 LingoQA 再 nav 更好」。
    课程学习的好处来自【数据规模和分布】，玩具只有 3 条样本、怎么排都能过拟合。
@@ -199,4 +219,21 @@ if __name__ == "__main__":
     print(f"  {'注入后 VLM 权重 vs stage1':<34}{vlm_gap_after:>12.4f}   ← 完全一致 ✓")
     print(f"  {'expert 权重（注入前后）':<34}{expert_gap:>12.4f}   ← expert 没被动过 ✓")
     print("\n  → 这就是 `stage1_vlm_checkpoint_path` 干的事：只换 VLM，expert 保持原样。")
-    print("     （RL 那条线同理：RL 只导出 VLM 权重，拿回 SFT 时 expert 随机初始化）")
+    print()
+    print("  ★ 但别把这个结论推广到【另一条 flow】—— 两条 flow 的起点不同：")
+    print()
+    print("     Flow A（刚演示的，stage1 → stage2）")
+    print("         起点 = nvidia/Alpamayo-1.5-10B      完整模型，【含 expert】")
+    print("         结果 = 新 VLM  +  发布模型那份 expert（保留）")
+    print()
+    print("     Flow B（RL checkpoint → stage2）")
+    print("         起点 = RL 导出的 checkpoint          【只有 VLM 权重】")
+    print("         结果 = RL 训的 VLM  +  【随机初始化】的 expert")
+    print()
+    print("     RL README 原文（recipes/alpamayo1_x_rl/README.md:470）：")
+    print('       "...the exported checkpoint contains only the VLM backbone')
+    print('        weights ... with non-strict weight loading for training')
+    print('        the action expert model with SFT. Note that the action')
+    print('        expert weights will be randomly initialized."')
+    print()
+    print("     → 「expert 随机初始化」只对 Flow B 成立，别套到 Flow A 上。")
