@@ -1,14 +1,14 @@
-"""train5b: SFT 阶段二 —— 冻结 VLM，只训 action expert
+"""train7: SFT 阶段二 —— 冻结 VLM，只训 action expert
 
 ★ 前置（两个，缺一个都会卡）：
-    train5a_flow_matching.py  —— 本课的 expert 就是用 flow matching 训的。
+    train6_flow_matching.py  —— 本课的 expert 就是用 flow matching 训的。
                                  没读的话，下面 `x_t = (1-t)·x0 + t·x1` 那两行看不懂。
     推理教程 stage13（尤其 Part 2）—— 本课就是它的真实版（KV cache 当条件）。
 
-阶段一（train4）训 VLM：看图 → 写 CoC + 生成离散轨迹 token。
+阶段一（train5）训 VLM：看图 → 写 CoC + 生成离散轨迹 token。
 阶段二换一条通路：**VLM 不动**，用它留下的 KV cache 当条件，训一个连续动作的 expert。
 
-模型与数据的定义在共享模块 `toy_stage2.py`（train6 也要用，所以抽出去了）；
+模型与数据的定义在共享模块 `toy_stage2.py`（train8 也要用，所以抽出去了）；
 本文件是【讲】这些的课——配着下面的注释和实测读。
 
 真实代码 `recipes/alpamayo1_5_sft/models/sft_alpamayo_r1.py:125` 的 forward，五步：

@@ -1,8 +1,8 @@
-"""train5a: flow matching —— 模型怎么「生成」一个连续的东西
+"""train6: flow matching —— 模型怎么「生成」一个连续的东西
 
 【为什么单独一课】
-train5b（阶段二）要训一个「从噪声去噪出轨迹」的 expert，用的就是 flow matching。
-但 flow matching 在前面几课里【一次都没出现过】——直接上 train5b 会卡在
+train7（阶段二）要训一个「从噪声去噪出轨迹」的 expert，用的就是 flow matching。
+但 flow matching 在前面几课里【一次都没出现过】——直接上 train7 会卡在
 `x_t = (1 - t) * x0 + t * x1` 那几行上。本课把它单独讲清楚。
 
 （推理教程 `alpamayo1.5/tutorials/` 的 stage2 / stage6 也讲过，
@@ -32,10 +32,10 @@ Flow matching 的做法是：**别让模型直接输出轨迹，让它输出一�
 
 【对应 Alpamayo】
     x 就是轨迹动作 (64 waypoint, 2 维)；
-    条件（图 + CoC）从哪来 —— 那是 train5b 的事（VLM 的 KV cache）。
+    条件（图 + CoC）从哪来 —— 那是 train7 的事（VLM 的 KV cache）。
 
 ★ 前置：不需要（本课自足）。想更细地看，推理教程的 stage2 / stage6 讲得更完整；
-  本课只讲 train5b 用得到的那部分。
+  本课只讲 train7 用得到的那部分。
 
 【简化】纯 CPU、秒级。一维数据、几十个参数的 MLP。
 """
@@ -56,7 +56,7 @@ class VelocityMLP(nn.Module):
     """预测「速度」的网络：吃 (x_t, t)，吐出速度。
 
     真实里它是 Alpamayo 的 action expert（36 层、hidden 2048），
-    而且吃的不只是 (x_t, t)，还有从 VLM 来的条件——那是 train5b 的内容。
+    而且吃的不只是 (x_t, t)，还有从 VLM 来的条件——那是 train7 的内容。
     """
 
     def __init__(self, hidden=64, n_freqs=8):
@@ -175,7 +175,7 @@ if __name__ == "__main__":
         print(f"  {ns:>9}{e.mean().item():>10.3f}{e.std().item():>10.3f}   {err:.3f}")
     print("  → 步数越多越准（欧拉积分是一阶方法），但每步都要一次前向——")
     print("     真实里这是【速度 vs 精度】的权衡。")
-    print("     train5b 里用 N_STEPS = 10（toy）；真实推理也是十几步量级。\n")
+    print("     train7 里用 N_STEPS = 10（toy）；真实推理也是十几步量级。\n")
 
     print("=" * 72)
     print("⑤ 一个容易踩的坑：训练和采样的 t 范围必须一致")
@@ -184,5 +184,5 @@ if __name__ == "__main__":
     print("  如果采样只用 t ∈ [0, 0.5]，你只走完了路径一半——")
     print("  模型没错，是你没走到终点。推理教程 stage2 的 temperature")
     print("  就是这类「训练/推理必须对齐」的参数之一。\n")
-    print("  下一课 train5b：把这个 expert 接到 VLM 的 KV cache 上——")
+    print("  下一课 train7：把这个 expert 接到 VLM 的 KV cache 上——")
     print("  也就是「条件怎么进去」。本课的网络只吃 (x_t, t)，没有任何条件。")

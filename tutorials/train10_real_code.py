@@ -1,6 +1,6 @@
-"""train8: 逐行对照真实代码 —— 收口
+"""train10: 逐行对照真实代码 —— 收口
 
-train1~7b 每课讲一个机制。这一课把它们全部映射回真实文件，
+train1~9b 每课讲一个机制。这一课把它们全部映射回真实文件，
 并给出「打开哪个文件、看哪一段、对应哪一课」的清单。
 
 用法：先看下面的表，再按顺序打开真实文件读。每读一段，回来跑一下本课，
@@ -46,28 +46,28 @@ MAPPING = [
      "按【token id 区间】判轨迹段：future_token_start_idx 起 traj_vocab_size 个"),
     ("train3", "两段相加不平均", "models/sft_base_model.py", "outputs.loss = sum(losses.values())",
      "就是 train3 说的「相加不是加权平均」"),
-    ("train4", "轨迹 token 融进序列", "models/sft_base_model.py", "fuse_traj_tokens",
+    ("train5", "轨迹 token 融进序列", "models/sft_base_model.py", "fuse_traj_tokens",
      "训练前把历史/未来的轨迹 token 填进占位符位置"),
-    ("train4", "历史轨迹 token 化", "models/sft_base_model.py", "tokenize_history_trajectory", ""),
-    ("train5b", "阶段二 forward", "models/sft_alpamayo_r1.py", "forward（第 125 行附近）",
+    ("train5", "历史轨迹 token 化", "models/sft_base_model.py", "tokenize_history_trajectory", ""),
+    ("train7", "阶段二 forward", "models/sft_alpamayo_r1.py", "forward（第 125 行附近）",
      "五步：fuse → labels → VLM(no_grad) → crop/detach → expert"),
-    ("train5b", "crop 掉真值轨迹", "models/sft_alpamayo_r1.py", "kv_cache.crop(last_traj_future_start_idx)",
-     "train5 用「裁 vs 不裁」实测了不做这步的后果"),
-    ("train5b", "冻结 VLM 的开关", "models/sft_alpamayo_r1.py", "cotrain_vlm / stop_grad_from_vlm",
-     "config 里 cotrain_vlm: false；train5 用梯度范数把这个开关打印出来了"),
-    ("train5b", "expert 非因果", "models/sft_alpamayo_r1.py", "expert_non_causal_attention",
+    ("train7", "crop 掉真值轨迹", "models/sft_alpamayo_r1.py", "kv_cache.crop(last_traj_future_start_idx)",
+     "train7 用「裁 vs 不裁」实测了不做这步的后果"),
+    ("train7", "冻结 VLM 的开关", "models/sft_alpamayo_r1.py", "cotrain_vlm / stop_grad_from_vlm",
+     "config 里 cotrain_vlm: false；train7 用梯度范数把这个开关打印出来了"),
+    ("train7", "expert 非因果", "models/sft_alpamayo_r1.py", "expert_non_causal_attention",
      "对应 toy 里 CacheBlock 的 causal=False"),
-    ("train5b", "位置 id 的偏移", "models/sft_alpamayo_r1.py", "_process_position_ids_qwen2_5_vl",
+    ("train7", "位置 id 的偏移", "models/sft_alpamayo_r1.py", "_process_position_ids_qwen2_5_vl",
      "rope_deltas + past_key_values.get_seq_length() —— toy 用可学习 pos_embed，省略了"),
-    ("train6", "三段课程", "configs/sft_stage1_lingoqa.yaml", "defaults: 那几行",
+    ("train8", "三段课程", "configs/sft_stage1_lingoqa.yaml", "defaults: 那几行",
      "三段各一个 yaml；对比 sft_stage1_nav.yaml / sft_stage2_nav.yaml 看它们换了什么"),
-    ("train6", "lr_multiplier", "trainer.py", "create_optimizer（第 58 行附近）",
-     "最长前缀匹配 → lr = base_lr × mult；train6 手写了一遍"),
-    ("train6", "checkpoint 交接", "configs/models/ar1_5_expert.yaml", "stage1_vlm_checkpoint_path",
+    ("train8", "lr_multiplier", "trainer.py", "create_optimizer（第 58 行附近）",
+     "最长前缀匹配 → lr = base_lr × mult；train8 手写了一遍"),
+    ("train8", "checkpoint 交接", "configs/models/ar1_5_expert.yaml", "stage1_vlm_checkpoint_path",
      "只换 VLM，expert 保持发布模型里那份"),
-    ("train7", "ZeRO 配置", "configs/deepspeed/zero2.json", "zero_optimization.stage",
+    ("train9", "ZeRO 配置", "configs/deepspeed/zero2.json", "zero_optimization.stage",
      "stage1 用 ZeRO-2；stage2 是 deepspeed: null"),
-    ("train7", "DDP 未使用参数", "configs/sft_stage2_nav.yaml", "ddp_find_unused_parameters: true",
+    ("train9", "DDP 未使用参数", "configs/sft_stage2_nav.yaml", "ddp_find_unused_parameters: true",
      "因为 VLM 冻结 → 有参数永远拿不到梯度"),
 ]
 
@@ -78,9 +78,9 @@ MAPPING = [
 LESSONS = {
     "train1": ("train1_lm_loss.py", "TinyLM"),
     "train2": ("train2_label_mask.py", "get_label_mask"),
-    "train5": ("train5b_sft_stage2.py", "Stage2Model"),
-    "train6": ("train6_curriculum.py", "build_param_groups"),
-    "train7": ("train7_memory.py", "zero_per_gpu"),
+    "train7": ("train7_sft_stage2.py", "Stage2Model"),
+    "train8": ("train8_curriculum.py", "build_param_groups"),
+    "train9": ("train9_memory.py", "zero_per_gpu"),
 }
 
 
@@ -154,10 +154,10 @@ if __name__ == "__main__":
     order = [
         ("configs/sft_stage1_nav.yaml", "先看三段课程各自配了什么，建立全景"),
         ("src/alpamayo/utils/get_label_mask.py", "最短的一个文件，train2 的真实版"),
-        ("models/sft_base_model.py", "阶段一：forward + 两段损失（train1~4）"),
-        ("models/sft_alpamayo_r1.py", "阶段二：crop + 冻结 + expert（train5）"),
-        ("trainer.py", "lr_multiplier（train6）"),
-        ("configs/deepspeed/zero2.json", "ZeRO 配置（train7）"),
+        ("models/sft_base_model.py", "阶段一：forward + 两段损失（train1~5）"),
+        ("models/sft_alpamayo_r1.py", "阶段二：crop + 冻结 + expert（train7）"),
+        ("trainer.py", "lr_multiplier（train8）"),
+        ("configs/deepspeed/zero2.json", "ZeRO 配置（train9）"),
         ("train_hf.py", "最后看入口，把上面全串起来"),
     ]
     for i, (rel, why) in enumerate(order, 1):

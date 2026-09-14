@@ -1,6 +1,5 @@
-# Alpamayo 训练教程复习题（train1 ~ train8）
+# Alpamayo 训练教程复习题（train1 ~ train10）
 
-> 带字母的课（`train3b` / `train5a`）是补课，题号也带字母。
 
 > **用法**：先自己答，再翻到文末对答案。每题标了「考点」，答不上来就回去看那一行代码。
 > 答案在意不在字——说出关键点即可。
@@ -58,85 +57,85 @@
 
 ---
 
-## train3b — 轨迹怎么变成 token（补课）
+## train4 — 轨迹怎么变成 token
 
-**3b-1** 你看到序列里出现 `<i32>`，能判断它属于哪个场景吗？为什么？
+**4-1** 你看到序列里出现 `<i32>`，能判断它属于哪个场景吗？为什么？
 <sub>考点：不能。三个场景的第一个 token 都是 `<i32>`（accel 都是 0）。
 含义在【整串】里，不在单个 token 上</sub>
 
-**3b-2** 真实里一条轨迹是几个 token？**128 这个数是怎么来的**？
+**4-2** 真实里一条轨迹是几个 token？**128 这个数是怎么来的**？
 <sub>考点：64 waypoint × 2 维（加速度、曲率）。toy 里是 8 × 2 = 16 个</sub>
 
-**3b-3** `T.encode` 返回的是 bin 号（0~63），塞进序列前为什么要 `+ V["<i0>"]`？
+**4-3** `T.encode` 返回的是 bin 号（0~63），塞进序列前为什么要 `+ V["<i0>"]`？
 <sub>考点：`<i0>` 不在词表下标 0（前面还有 12 个固定 token）。
 真实里这一步叫 `tokenizer.traj_token_start_idx`</sub>
 
-**3b-4** 真实为什么用 3000 个 bin，不用 64 个？
+**4-4** 真实为什么用 3000 个 bin，不用 64 个？
 <sub>考点：bin 数决定量化误差（≈ 分辨率的一半）；但词表也跟着涨。
 3000 相对 ~15 万的自然语言词表只占 2%。
 第二层原因：128 个 token 一起描述一条轨迹，单个 bin 不需要多准</sub>
 
 ---
 
-## train4 — 阶段一完整 SFT
+## train5 — 阶段一完整 SFT
 
-**4-1** `others_mask = cot | eos_mask` —— `<eos>` 为什么要单独 `|` 进来？
+**5-1** `others_mask = cot | eos_mask` —— `<eos>` 为什么要单独 `|` 进来？
 **注意 train2 里 `<cot_end> → <eos>` 是 ✗**（不算 loss），两个文件对 `<eos>` 的处理不一致。
 哪个对？
 <sub>考点：真实代码里有两套 mask——`get_label_mask` 管区间，`get_assistant_mask` 管
-assistant 回复的 eos（注释写着 "include the eos (+1) for supervision"）。train4 更接近真实</sub>
+assistant 回复的 eos（注释写着 "include the eos (+1) for supervision"）。train5 更接近真实</sub>
 
-**4-2** 图片 embedding 拼在序列**最前面**，而 `head` 输出时又 `x[:, 1:, :]` 把第一个位置切掉。
+**5-2** 图片 embedding 拼在序列**最前面**，而 `head` 输出时又 `x[:, 1:, :]` 把第一个位置切掉。
 为什么可以切？不切会怎样？
 <sub>考点：切掉的是「图片位置」的输出。图片只是被「看」，不需要被「预测」；
 不切的话 logits 会多一位，和 labels 对不上</sub>
 
-**4-3** 训练时：**图片位置**的输出参与 loss 吗？**`<bos>` 位置**的输出参与吗？
+**5-3** 训练时：**图片位置**的输出参与 loss 吗？**`<bos>` 位置**的输出参与吗？
 还有——`<bos>` 本身作为**目标**被预测过吗？（三个小问，答案不一样）
 <sub>考点：图片输出被切掉了，不参与；`<bos>` 的输出【参与】（用来预测 `<cot_start>`）；
 但 `<bos>` 从不作为目标（labels 位置 0 是 IGNORE）</sub>
 
 ---
 
-## train5a — flow matching（补课）
+## train6 — flow matching
 
-**5a-1** flow matching 为什么**不直接让模型输出轨迹**，而要绕一圈学「速度场」？
+**6-1** flow matching 为什么**不直接让模型输出轨迹**，而要绕一圈学「速度场」？
 <sub>考点：直接回归只会得到「条件均值」——多个合理的未来会被平均成
 一条不存在的轨迹（推理教程 stage8 讲过）</sub>
 
-**5a-2** `v_target = x1 - x0` 和 `t` 有关系吗？这说明什么？
+**6-2** `v_target = x1 - x0` 和 `t` 有关系吗？这说明什么？
 <sub>考点：**没有关系**——直线路径上速度恒定。这是 FM 比 DDPM 简单的地方
 （DDPM 要预测的是和 t 有关的东西）</sub>
 
-**5a-3** 采样 `x ← x + dt · v_model(x, t)` 里有随机性吗？那「生成多样性」从哪来？
+**6-3** 采样 `x ← x + dt · v_model(x, t)` 里有随机性吗？那「生成多样性」从哪来？
 <sub>考点：没有随机性——同样的起点一定得到同样的终点。
 多样性在【起点】上做（初始噪声）</sub>
 
-**5a-4** 训练时 t 从 U(0,1) 采，采样时只积到 t=0.5 会怎样？
+**6-4** 训练时 t 从 U(0,1) 采，采样时只积到 t=0.5 会怎样？
 <sub>考点：只走完路径一半，停在噪声和数据之间。
 模型没错，是你没走到终点。这类「训练/推理必须对齐」的坑不止这一处</sub>
 
 ---
 
-## train5b — SFT 阶段二（冻结 VLM + 训 expert）
+## train7 — SFT 阶段二（冻结 VLM + 训 expert）
 
-**5b-1** `train_expert` 里 expert 的**输入**是什么？它有 `condition` 参数吗？
+**7-1** `train_expert` 里 expert 的**输入**是什么？它有 `condition` 参数吗？
 <sub>考点：真实 `sft_alpamayo_r1.py:125` 的 forward 里，expert 收的是
 `inputs_embeds=action_embeds` + `past_key_values=kv_cache`</sub>
 
-**5b-2** 为什么必须 `kv_cache.crop(...)`？**不裁**会怎样？（提示：训练时的序列里有什么）
+**7-2** 为什么必须 `kv_cache.crop(...)`？**不裁**会怎样？（提示：训练时的序列里有什么）
 <sub>考点：teacher forcing 的序列里 `<traj_future_start>` 后面跟着【真值轨迹 token】，
 不裁就是把标准答案放进了 expert 的前缀里</sub>
 
-**5b-3** 本课实测里，「不裁」那一版的**训练 fm_loss 和「裁」几乎一样**，但推理时明显更差。
+**7-3** 本课实测里，「不裁」那一版的**训练 fm_loss 和「裁」几乎一样**，但推理时明显更差。
 为什么训练 loss 看不出来？
 <sub>考点：训练时 CoC 和轨迹 token 永远一致，expert 没有理由偏爱任何一个，
 于是学成「一半看 CoC、一半抄答案」——两边都用上了，loss 自然不会变差</sub>
 
-**5b-4** `cotrain_vlm=False` 时 VLM 的梯度是多少？靠哪**两件**事保证？
+**7-4** `cotrain_vlm=False` 时 VLM 的梯度是多少？靠哪**两件**事保证？
 <sub>考点：`torch.no_grad()` 包住 VLM forward + `cache.detach()`（`stop_grad_from_vlm`）</sub>
 
-**5b-5** 既然 `cotrain_vlm=False` 已经用了 `torch.no_grad()`，那 `stop_grad_from_vlm`
+**7-5** 既然 `cotrain_vlm=False` 已经用了 `torch.no_grad()`，那 `stop_grad_from_vlm`
 （把 cache 的 K/V detach）是不是多余的？它真正防的是哪种情况？
 <sub>考点：`cotrain_vlm=True` 时 forward 不在 no_grad 里，cache 是带图的；
 这时 detach 才是必须的——它让【expert 的 loss 不回流到 VLM】，
@@ -144,56 +143,56 @@ assistant 回复的 eos（注释写着 "include the eos (+1) for supervision"）
 
 ---
 
-## train6 — 三段课程与训练技巧
+## train8 — 三段课程与训练技巧
 
-**6-1** 三段课程分别是什么？为什么 LingoQA 排在最前？
+**8-1** 三段课程分别是什么？为什么 LingoQA 排在最前？
 <sub>考点：stage1_lingoqa（通用 VQA，先建立视觉-语言对齐）→ stage1_nav（驾驶推理 + 轨迹 token）
 → stage2_nav（冻结 VLM，训 expert）</sub>
 
-**6-2** `lr_multiplier: {vlm.model.visual: 0.1}` —— 为什么**视觉塔**只给 1/10 学习率？
+**8-2** `lr_multiplier: {vlm.model.visual: 0.1}` —— 为什么**视觉塔**只给 1/10 学习率？
 <sub>考点：视觉特征来自预训练、最通用也最容易被打坏；驾驶数据规模远小于预训练，
 大 lr 会把 ViT 拉偏。语言塔要学新的 CoC 表达，得给足 lr</sub>
 
-**6-3** 如果同时写了 `{vlm: 0.5, vlm.model.visual: 0.1}`，视觉塔的参数会用哪个倍率？
+**8-3** 如果同时写了 `{vlm: 0.5, vlm.model.visual: 0.1}`，视觉塔的参数会用哪个倍率？
 <sub>考点：**最长前缀匹配**——用更长的那条（0.1）</sub>
 
-**6-4** `stage1_vlm_checkpoint_path` 交接时，哪些权重被换掉、哪些保持原样？
+**8-4** `stage1_vlm_checkpoint_path` 交接时，哪些权重被换掉、哪些保持原样？
 <sub>考点：只换 VLM；expert 保持发布模型（`nvidia/Alpamayo-1.5-10B`）里那份。
 （RL 那条线反过来：只导出 VLM，拿回 SFT 时 expert 随机初始化）</sub>
 
 ---
 
-## train7 — 显存与分布式
+## train9 — 显存与分布式
 
-**7-1** 训练时一个参数占几份显存？**哪一块最大**？
+**9-1** 训练时一个参数占几份显存？**哪一块最大**？
 <sub>考点：权重 2B + 梯度 2B + 优化器状态 12B（fp32 主权重 4 + 一阶动量 4 + 二阶动量 4）
 = 16 字节；优化器状态占 75%</sub>
 
-**7-2** ZeRO 1 / 2 / 3 分别把什么切开？
+**9-2** ZeRO 1 / 2 / 3 分别把什么切开？
 <sub>考点：1 切优化器状态；2 再切梯度；3 再切参数本身</sub>
 
-**7-3** 为什么 stage2 的 config 是 `deepspeed: null`（而 stage1 用 zero2）？
+**9-3** 为什么 stage2 的 config 是 `deepspeed: null`（而 stage1 用 zero2）？
 <sub>考点：VLM 冻结 → 8B 参数不要梯度也不要优化器状态，只占权重；
 开销大头只剩 expert 的 ~27GB，一张 80GB 卡放得下</sub>
 
-**7-4** `ddp_find_unused_parameters` 为什么只在 **stage2** 是 `true`？
+**9-4** `ddp_find_unused_parameters` 为什么只在 **stage2** 是 `true`？
 <sub>考点：VLM 冻结 → 它的参数永远拿不到梯度。DDP 必须开这个开关去搜索
 「哪些参数没被用到」，否则直接报错。stage1 全模型都参与 loss，不需要</sub>
 
-**7-5** 既然要更大的 batch，为什么不直接把 `micro_batch_size` 调大，
+**9-5** 既然要更大的 batch，为什么不直接把 `micro_batch_size` 调大，
 而要用 `gradient_accumulation_steps`？
 <sub>考点：【激活】显存 ∝ micro_batch_size × 序列长度，是唯一随 batch 线性涨的一块；
 梯度累积把等效 batch 做大，但同一时刻只有一个 micro-batch 的激活在显存里。代价是慢</sub>
 
 ---
 
-## train8 — 逐行对照
+## train10 — 逐行对照
 
-**8-1** 默写阶段二 forward 的**五步**（不必逐字，说清顺序和每步在干嘛）。
+**10-1** 默写阶段二 forward 的**五步**（不必逐字，说清顺序和每步在干嘛）。
 <sub>考点：fuse_traj_tokens → labels(掩码) → VLM forward(no_grad) 拿 past_key_values
 → crop + detach → expert(动作, cache) → action_out_proj → flow matching loss</sub>
 
-**8-2** 为什么说 `alpamayo-recipes` 是「**在已发布模型上继续训**」而不是「从头训一个 Alpamayo」？
+**10-2** 为什么说 `alpamayo-recipes` 是「**在已发布模型上继续训**」而不是「从头训一个 Alpamayo」？
 <sub>考点：`from_alpamayo_checkpoint` 的 docstring——按 config 建 VLM 架构（不加载 base 权重），
 再加载 checkpoint 里 fine-tuned 的 `vlm.*` 权重；`Qwen/Qwen3-VL-8B-Instruct` 只用来建
 tokenizer / processor 的架构</sub>
@@ -266,27 +265,27 @@ mean(cot 8个) + mean(traj 4个) = 2.8066 + 2.8668 = 5.6734   ← 代码给的�
 train3 是把一条序列切成两段；stage13 是把两种完全不同的损失绑在一起。
 **两个「平均」的分母完全不同**，所以那个 1:1 的比例是**人为设定**的，不是从数据里算出来的。
 
-**4-1** **(a) 为什么 `<eos>` 必须算 loss**：和 2-1 的 `<cot_end>` 同一个道理——
+**5-1** **(a) 为什么 `<eos>` 必须算 loss**：和 2-1 的 `<cot_end>` 同一个道理——
 一个 token 只有成为**目标**，模型才会被教着**输出**它。`<eos>` 不算 loss ⟹
 模型从没学过吐 `<eos>` ⟹ **生成时不知道何时结束**，一路跑到 `max_len`。
 
-**(b) 哪个对**：**train4 对**。真实代码 `get_assistant_mask` 的注释原文：
+**(b) 哪个对**：**train5 对**。真实代码 `get_assistant_mask` 的注释原文：
 *"Offsets: skip the bos + 'assistant\n' (always 3 tokens) and include the eos (+1) for supervision"*。
 
 **(c) train2 不算错，是只讲了一半**：真实代码有**两套 mask**——
 `get_label_mask` 按 `{label}_start`/`{label}_end` 划**区间**（train2 对应这套），
-`get_assistant_mask` 单独管 assistant 回复里的 `<eos>`（train4 补上这套）。
+`get_assistant_mask` 单独管 assistant 回复里的 `<eos>`（train5 补上这套）。
 
-**4-2** 图片是**额外拼在最前面**的，`input_ids` 有 L 个 token（现在是 24，
+**5-2** 图片是**额外拼在最前面**的，`input_ids` 有 L 个 token（现在是 24，
 因为轨迹是 16 个 token 而不是 1 个）。
 **不切的话** `head(x)` 给出 **L+1 个** logits，而 `labels` 只有 L 个：
 `logits[:, :-1]` → L 个，`labels[:, 1:]` → L-1 个，**「错一位」直接崩掉**。
 
 **为什么可以切**：本质是**图片位置是「输入」，不是「要被预测的东西」**——
 它只有「被看」这一个身份，没有对应的监督目标，输出本来就不该进 loss。
-（对比 `<bos>`：它也是特殊的，但它的**输出要被用**，见 4-3。）
+（对比 `<bos>`：它也是特殊的，但它的**输出要被用**，见 5-3。）
 
-**4-3** 三个小题答案不同，关键是把「**输出**」和「**目标**」分开：
+**5-3** 三个小题答案不同，关键是把「**输出**」和「**目标**」分开：
 
 | 位置 | 输出参与 loss 吗 | 作为目标被预测过吗 |
 |---|---|---|

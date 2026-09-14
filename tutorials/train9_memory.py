@@ -1,4 +1,4 @@
-"""train7: 显存与分布式 —— 跑得动吗
+"""train9: 显存与分布式 —— 跑得动吗
 
 train1~6 讲的是「训练在算什么」。这一课讲「训练跑不跑得起来」。
 
@@ -104,7 +104,7 @@ if __name__ == "__main__":
 
     # ── 阶段二：只训 expert（VLM 冻结）──
     vlm_frozen = VLM_PARAMS * 2                       # 冻结 → 只要权重，不需要梯度/优化器
-    print("  阶段二（train5 那一步）：VLM 冻结，只训 expert\n")
+    print("  阶段二（train7 那一步）：VLM 冻结，只训 expert\n")
     print(f"  {'':<30}{'每卡模型状态(不含激活)':>20}")
     print("  " + "-" * 46)
     print(f"  {'VLM 权重（冻结，bf16，不参与优化）':<30}{vlm_frozen/GB:>11.1f} GB")

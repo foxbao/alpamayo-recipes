@@ -1,9 +1,9 @@
-"""train3b: 轨迹怎么变成 token —— 离散轨迹 tokenizer
+"""train4: 轨迹怎么变成 token —— 离散轨迹 tokenizer
 
-（补课。建议在 train4 之前或之后读：train4/train5 的序列里那些 `<i32>` 是怎么来的，
+（补课。建议在 train5 之前或之后读：train5/train7 的序列里那些 `<i32>` 是怎么来的，
   就是本课要讲的事。不读也能跑，但读了才不会有「`<iK>` 是个类别标签」的误解。）
 
-train4 起的困惑：VOCAB 里有 `<i0> <i1> <i2>`，看着像三个「类别」。
+train5 起的困惑：VOCAB 里有 `<i0> <i1> <i2>`，看着像三个「类别」。
 真实不是——它们是 **bin 刻度**，而且一条轨迹要 **128 个**。
 
 为什么 VLM 需要这个：语言模型的输出是【下一个 token 的概率分布】，
@@ -149,4 +149,4 @@ if __name__ == "__main__":
     print("  · 发布推理走通路 B（连续 expert）时，`ExpertLogitsProcessor` 会把这")
     print(f"    {REAL_NUM_BINS} 个 token 全 mask 成 -inf，生成【停在 <traj_future_start>】，")
     print("    交给 flow-matching expert 出连续动作。")
-    print("  · train5 里 crop 掉的「真值轨迹 token」，真实里就是这 128 个。")
+    print("  · train7 里 crop 掉的「真值轨迹 token」，真实里就是这 128 个。")

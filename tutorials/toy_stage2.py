@@ -1,4 +1,4 @@
-"""玩具版「阶段二」的模型与数据 —— train5b 和 train6 共用
+"""玩具版「阶段二」的模型与数据 —— train7 和 train8 共用
 
 真实对应：recipes/alpamayo1_5_sft/models/sft_alpamayo_r1.py
           （VLM + action expert + crop + 两个开关）
@@ -9,9 +9,9 @@
     ActionInProj / TinyExpert / Stage2Model —— action expert 与它的组装
     train_vlm                              —— 阶段一：把 VLM 训到会写 CoC
 
-train5b 是【讲】这些的课（配着注释读它）；train6 只是【用】其中的模型做
-checkpoint 交接演示。放这里是为了让 train6 不依赖 train5b 的实现细节——
-本文件改了 API，train5b/train6 会一起编译不过，不会出现「一个悄悄坏掉」。
+train7 是【讲】这些的课（配着注释读它）；train8 只是【用】其中的模型做
+checkpoint 交接演示。放这里是为了让 train8 不依赖 train7 的实现细节——
+本文件改了 API，train7/train8 会一起编译不过，不会出现「一个悄悄坏掉」。
 
 更完整的分工见 README 的课程路线。
 """
@@ -53,7 +53,7 @@ VOCAB_SIZE = len(VOCAB)
 #   （src/alpamayo1_5/models/base_model.py:271）
 #
 # 关键：**一条轨迹是一串 token，不是一个**。每个 <iK> 是一个【量化刻度（bin）】，
-# 单独看【没有任何语义】。量化四步见 train3b_quantize.py，本文件用同一套。
+# 单独看【没有任何语义】。量化四步见 train4_traj_tokens.py，本文件用同一套。
 #
 #   真实： <traj_future_start>  <i0> <i1> ... <i127>  <traj_future_end>
 #          128 = 64 waypoint × 2 维，num_bins = 3000

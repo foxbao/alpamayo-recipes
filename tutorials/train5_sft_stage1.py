@@ -1,4 +1,4 @@
-"""train4: 阶段一的【机制组装】—— 迷你 VLM 的监督微调
+"""train5: 阶段一的【机制组装】—— 迷你 VLM 的监督微调
 
 把 train1~3 的三个机制装起来：
   train1: next-token 交叉熵
@@ -51,7 +51,7 @@ VOCAB_SIZE = len(VOCAB)
 #   （src/alpamayo1_5/models/base_model.py:271；release config 里 num_bins=3000）
 #
 # 关键：**一条轨迹是一串 token，不是一个**。而且每个 <iK> 是一个【量化刻度（bin）】，
-# 单独看【没有任何语义】。量化就四步（见 train3b_quantize.py，本文件也用同一套）：
+# 单独看【没有任何语义】。量化就四步（见 train4_traj_tokens.py，本文件也用同一套）：
 #     轨迹 → (加速度, 曲率) → 归一化 → ×(num_bins-1) → round
 #
 #   真实： <traj_future_start>  <i0> <i1> ... <i127>  <traj_future_end>
@@ -69,7 +69,7 @@ VOCAB_SIZE = len(VOCAB)
 
 # ---- 数据集：3 个"场景"，每个 = (图片, CoC 文本, 目标曲率) ----
 # 图片用 one-hot 表示"看到什么"；轨迹不是「一个 token」，而是由 (accel, κ) 量化出来的
-# 一串 token（见下面 make_traj_tokens 和 train3b_quantize.py）。
+# 一串 token（见下面 make_traj_tokens 和 train4_traj_tokens.py）。
 DATA = [
     # (img_idx, cot 词, 目标 κ)
     (0, ["turn", "left"], +0.10),         # 看到左转场景 -> 左转
@@ -79,7 +79,7 @@ DATA = [
 
 
 def make_traj_tokens(kappa):
-    """把这个场景的整条轨迹量化成 token 序列 —— 就是 train3b 讲的那件事。
+    """把这个场景的整条轨迹量化成 token 序列 —— 就是 train4 讲的那件事。
 
     动作 = 每个 waypoint 的 (加速度=0, 曲率=kappa) → 走真实的四步
     （归一化 → ×(num_bins-1) → round → clamp）→ 得到 TOKENS_PER_TRAJ 个 token。

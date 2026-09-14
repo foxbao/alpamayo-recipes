@@ -74,7 +74,7 @@ SFT stage1 (VLM) → RL (VLM + 离散轨迹) → SFT stage2 (expert 重新随机
 ```
 
 > **RL 是独立的一整套**：`recipes/alpamayo1_x_rl/`（GRPO via Cosmos-RL，
-> policy/rollout/controller 异步架构，需要 ≥5×80GB 显存）。本教程的 `train1~8`
+> policy/rollout/controller 异步架构，需要 ≥5×80GB 显存）。本教程的 `train1~10`
 > 只讲 SFT；RL 单独开 `rl*` 轨道，且只讲**算法层**（基础设施教学价值低）。
 
 ---
@@ -86,18 +86,21 @@ SFT stage1 (VLM) → RL (VLM + 离散轨迹) → SFT stage2 (expert 重新随机
 | 1 | `train1_lm_loss.py` | 语言建模损失：next-token 交叉熵（阶段一的本质）✅ |
 | 2 | `train2_label_mask.py` | 标签掩码 + 错一位对齐：哪些 token 该算 loss ✅ |
 | 3 | `train3_two_losses.py` | 两段损失：future_traj + others 拆开算 ✅ |
-| 3b | `train3b_quantize.py` | **补课**：轨迹怎么量化成一串 token（`<iK>` 到底是什么）✅ |
-| 4 | `train4_sft_stage1.py` | 阶段一的机制组装：迷你 VLM SFT ✅ |
-| 5a | `train5a_flow_matching.py` | **补课**：flow matching 是什么（训练目标 + 欧拉采样）✅ |
-| 5b | `train5b_sft_stage2.py` | **阶段二机制**：冻结 VLM + 训 expert（crop cache、`cotrain_vlm` 梯度对照）✅ |
-| 6 | `train6_curriculum.py` | **三段课程与训练技巧**：LingoQA 为什么在前、`lr_multiplier` 视觉塔 0.1、checkpoint 交接 ✅ |
-| 7 | `train7_memory.py` | 显存与分布式：显存花在哪、ZeRO 1/2/3、为什么 stage2 不用 DeepSpeed ✅ |
-| 8 | `train8_real_code.py` | 逐行对照真实代码（把 1~7 的机制映射到行号）✅ |
+| 4 | `train4_traj_tokens.py` | 轨迹怎么量化成一串 token（`<iK>` 到底是什么）✅ |
+| 5 | `train5_sft_stage1.py` | 阶段一的机制组装：迷你 VLM SFT ✅ |
+| 6 | `train6_flow_matching.py` | flow matching 是什么（训练目标 + 欧拉采样）✅ |
+| 7 | `train7_sft_stage2.py` | **阶段二机制**：冻结 VLM + 训 expert（crop cache、`cotrain_vlm` 梯度对照）✅ |
+| 8 | `train8_curriculum.py` | **三段课程与训练技巧**：LingoQA 为什么在前、`lr_multiplier` 视觉塔 0.1、checkpoint 交接 ✅ |
+| 9 | `train9_memory.py` | 显存与分布式：显存花在哪、ZeRO 1/2/3、为什么 stage2 不用 DeepSpeed ✅ |
+| 10 | `train10_real_code.py` | 逐行对照真实代码（把 1~9 的机制映射到行号）✅ |
 
-> `train1~4` 是**导入**（先讲清损失长什么样），`train5a/5b` 是**关键一跳**（阶段二怎么接上），
-> `train6~7` 是**工程**（课程设计、跑得动吗），`train8` 收口。
-> **带字母的课是补课**：`train3b` 和 `train5a` 各自补一个前置概念，
-> 建议按编号顺序读——它们就是为了消掉「突然冒出来一个没讲过的东西」才拆出来的。
+> **编号就是阅读顺序**，没有字母后缀 —— 一课的粒度就是「一个能独立讲清的概念」。
+> 结构上：`train1~5` 是**导入**（先讲清 loss 和序列长什么样），
+> `train6~7` 是**关键一跳**（flow matching + 阶段二怎么接上），
+> `train8~9` 是**工程**（课程设计、跑得动吗），`train10` 收口。
+>
+> `train4`（轨迹 token）和 `train6`（flow matching）之所以单独成课，是因为
+> 它们各自是**独立主题**，混进别课会让人卡在一个没讲过的东西上。
 
 ### ★ 每课需要推理教程（`alpamayo1.5/tutorials/`）的哪几节
 
@@ -106,13 +109,13 @@ SFT stage1 (VLM) → RL (VLM + 离散轨迹) → SFT stage2 (expert 重新随机
 | 课 | 需要推理教程的 | 为什么 |
 |---|---|---|
 | train1~3 | — | 只用 `embed + head`，没有 attention |
-| **train3b** | real1 | `<i0>`…`<i3999>` 那个词表怎么来的 |
-| **train4** | **stage9, stage13** | 突然出现 `CausalBlock`（自注意力）和因果 mask |
-| **train5a** | **stage2, stage6** | flow matching 的采样循环与训练目标 |
-| **train5b** | **stage13（尤其 Part 2）** | KV cache 当条件 —— 和 Part 2 是同一件事 |
-| train6 | — | 全是配置与课程设计，没有新机制 |
-| train7 | — | 显存算术 |
-| train8 | — | 纯映射 |
+| **train4** | real1 | `<i0>`…`<i3999>` 那个词表怎么来的 |
+| **train5** | **stage9, stage13** | 突然出现 `CausalBlock`（自注意力）和因果 mask |
+| **train6** | **stage2, stage6** | flow matching 的采样循环与训练目标 |
+| **train7** | **stage13（尤其 Part 2）** | KV cache 当条件 —— 和 Part 2 是同一件事 |
+| train8 | — | 全是配置与课程设计，没有新机制 |
+| train9 | — | 显存算术 |
+| train10 | — | 纯映射 |
 | rl1 | — | 算法本身自足 |
 | rl2 | real5 | ADE / FDE 这些指标在 real5 里出现过 |
 | rl3 | — | 纯映射 |
@@ -121,12 +124,12 @@ SFT stage1 (VLM) → RL (VLM + 离散轨迹) → SFT stage2 (expert 重新随机
 
 | 文件 | 是什么 | 谁在用 |
 |---|---|---|
-| `toy_traj_tokens.py` | 玩具版离散轨迹 tokenizer（镜像 `DiscreteTrajectoryTokenizer`） | train3b / train4 / train5b |
-| `toy_stage2.py` | 阶段二的模型与数据（`TinyVLM` / `TinyExpert` / `Stage2Model` / `make_sample`） | train5b（讲）/ train6（用） |
+| `toy_traj_tokens.py` | 玩具版离散轨迹 tokenizer（镜像 `DiscreteTrajectoryTokenizer`） | train4 / train5 / train7 |
+| `toy_stage2.py` | 阶段二的模型与数据（`TinyVLM` / `TinyExpert` / `Stage2Model` / `make_sample`） | train7（讲）/ train8（用） |
 
-> 抽成模块是为了**别让一课硬依赖另一课的实现细节**：原来 `train6` 是
-> `from train5_sft_stage2 import ...` 直接 import 7 个名字，train5b 一改
-> 它就可能悄悄坏掉。放共享模块里，改 API 两边会一起编译不过，不会漏。
+> 抽成模块是为了**别让一课硬依赖另一课的实现细节**：`train8_curriculum.py` 原本
+> 直接 `from train7_sft_stage2 import ...` 了 7 个名字，train7 一改它就可能悄悄坏掉。
+> 放共享模块里，改 API 两边会一起编译不过，不会漏。
 
 ---
 
@@ -166,9 +169,9 @@ SFT 的 loss 里根本没有「好不好」这一项。RL 就是把 reward 变�
 | `<eos>` 也监督 | 同文件的 `get_role_eos_mask` / `get_assistant_mask`（注释：*include the eos (+1) for supervision*） |
 | 两段损失 | `sft_base_model.py:388-407`（`future_traj` / `others`） |
 | 轨迹 token 融进序列 | `sft_base_model.py` `fuse_traj_tokens` / `tokenize_history_trajectory` |
-| **轨迹量化成 token** | `src/alpamayo1_5/action_space/discrete_action_space.py:47` `DiscreteTrajectoryTokenizer.encode`（train3b；toy 版是 `toy_traj_tokens.py`） |
-| 造 `<i0>`…`<i3999>` 词表 | `src/alpamayo1_5/models/base_model.py:271`（train3b） |
-| 推理时屏蔽这些 token | `src/alpamayo1_5/models/alpamayo1_5.py:44` `ExpertLogitsProcessor`（train3b） |
+| **轨迹量化成 token** | `src/alpamayo1_5/action_space/discrete_action_space.py:47` `DiscreteTrajectoryTokenizer.encode`（train4；toy 版是 `toy_traj_tokens.py`） |
+| 造 `<i0>`…`<i3999>` 词表 | `src/alpamayo1_5/models/base_model.py:271`（train4） |
+| 推理时屏蔽这些 token | `src/alpamayo1_5/models/alpamayo1_5.py:44` `ExpertLogitsProcessor`（train4） |
 | 阶段二（冻结 + expert） | `recipes/alpamayo1_5_sft/models/sft_alpamayo_r1.py:125` `forward` |
 | 阶段二的 cache 裁剪 | 同文件 `kv_cache.crop(last_traj_future_start_idx)` |
 | `cotrain_vlm` / `stop_grad_from_vlm` | 同文件 `__init__`（默认 `False` / `True`） |

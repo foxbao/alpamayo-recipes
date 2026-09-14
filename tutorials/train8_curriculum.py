@@ -1,6 +1,6 @@
-"""train6: 三段课程与训练技巧
+"""train8: 三段课程与训练技巧
 
-train4/5 讲的是「一步训练里发生什么」。这一课讲**训练是怎么编排的** ——
+train5/5 讲的是「一步训练里发生什么」。这一课讲**训练是怎么编排的** ——
 内容全部来自 `recipes/alpamayo1_5_sft/configs/` 里那几个 yaml。
 
 三段课程（每段一个 config）：
@@ -20,7 +20,7 @@ train4/5 讲的是「一步训练里发生什么」。这一课讲**训练是怎
                     注入: stage1_vlm_checkpoint_path ← stage1 训出的 VLM
                     cotrain_vlm: false
                     技巧: deepspeed: null
-                    → 冻结 VLM，训 action expert（train5 讲的就是这步的内部）
+                    → 冻结 VLM，训 action expert（train7 讲的就是这步的内部）
 
 ★ 本课能实测的三件事：
     ① 同一套权重，两个阶段吃的是【不同形态】的数据（打印两条序列对比）
@@ -130,9 +130,9 @@ if __name__ == "__main__":
     print("     VQA 是「图 + 问题 + 答案」，nav 是「图 + 历史 + 导航 + 提示 + 未来轨迹」。")
     print("     先让模型在通用 VQA 上把「看图说话」练好，再学「看图开车」这个具体领域。\n")
 
-    # 用 train5 的数据形态举个具体的序列例子
+    # 用 train7 的数据形态举个具体的序列例子
     s0 = make_sample(*DATA[0])[0]
-    print(f"  nav 的一条真实序列长这样（train5 用的同款）：")
+    print(f"  nav 的一条真实序列长这样（train7 用的同款）：")
     print(f"     {' '.join(VOCAB[t] for t in s0.tolist())}")
     print(f"     对应的 components_order 是 image | traj_history | route | prompt | traj_future，")
     print(f"     但 toy 里只有其中三段（image / prompt / traj_future）。\n")
@@ -173,7 +173,7 @@ if __name__ == "__main__":
     input_ids = torch.stack([x[0] for x in samples])
     img_feats = torch.stack([x[1] for x in samples])
 
-    # 「stage1」：只训 VLM（train5 的 train_vlm 只动 .vlm 的参数）
+    # 「stage1」：只训 VLM（train7 的 train_vlm 只动 .vlm 的参数）
     stage1_holder = Stage2Model()
     loss1 = train_vlm(stage1_holder, input_ids, img_feats)
     stage1_vlm = stage1_holder.vlm
