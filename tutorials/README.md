@@ -97,8 +97,29 @@ SFT stage1 (VLM) → RL (VLM + 离散轨迹) → SFT stage2 (expert 重新随机
 **共享模块**：`toy_traj_tokens.py` —— 玩具版离散轨迹 tokenizer（镜像真实的
 `DiscreteTrajectoryTokenizer`），`train4` / `train5` / `train9` 都用它。
 
-**后续轨道（尚未开始）**：`rl1_grpo.py` / `rl2_reward.py` / `rl3_real_code.py` ——
-只讲 GRPO 算法层与 Alpamayo 的 reward 设计，不碰 Cosmos-RL 那套基础设施。
+---
+
+## RL 轨道（rl1 ~ rl3）
+
+SFT 的损失优化的是「像不像真值」，但「像真值」≠「车开得好」——
+SFT 的 loss 里根本没有「好不好」这一项。RL 就是把 reward 变成梯度的办法。
+
+真实代码在 `recipes/alpamayo1_x_rl/`（GRPO via Cosmos-RL，**需要 ≥5×80GB**，
+真实配置是 64 个 policy replica + 128 个 rollout replica）。
+所以本轨道**只做算法层**，不碰 Cosmos-RL 那套基础设施。
+
+| 课 | 文件 | 学什么 |
+|---|---|---|
+| 1 | `rl1_grpo.py` | **GRPO 算法核心**：reward 不可导 → score function → 组内归一化省掉 critic ✅ |
+| 2 | `rl2_reward.py` | **reward 设计**：ADE + comfort、gate 的形状、reasoning reward ✅ |
+| 3 | `rl3_real_code.py` | 逐行对照真实代码 + SFT/RL 差别表 ✅ |
+
+> `rl1` 实测：GRPO 的梯度方差是 REINFORCE 的 **1/36**；给所有 reward 加同一个常数，
+> advantage **完全不变**（这就是「相对」的含义，也是它能省掉 critic 的原因）。
+
+> ⚠️ RL 训的是 **VLM backbone**（走**离散轨迹 token** 那条通路），
+> 不是 SFT 阶段二那个连续 action expert。所以 RL 导出的 checkpoint
+> **只含 VLM 权重**，拿回去 SFT 训 expert 时 expert 是**随机初始化**的。
 
 > 每课都能独立运行（纯 CPU，单课 2~20 秒），重点看**张量 shape 和数值变化**。
 
