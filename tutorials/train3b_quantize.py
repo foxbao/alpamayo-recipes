@@ -1,4 +1,4 @@
-"""train9: 轨迹怎么变成 token —— 离散轨迹 tokenizer
+"""train3b: 轨迹怎么变成 token —— 离散轨迹 tokenizer
 
 （补课。建议在 train4 之前或之后读：train4/train5 的序列里那些 `<i32>` 是怎么来的，
   就是本课要讲的事。不读也能跑，但读了才不会有「`<iK>` 是个类别标签」的误解。）

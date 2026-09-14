@@ -44,7 +44,7 @@ train4/5 讲的是「一步训练里发生什么」。这一课讲**训练是怎
 import torch
 import torch.nn as nn
 
-from train5_sft_stage2 import (
+from toy_stage2 import (
     Stage2Model, TinyVLM, make_sample, train_vlm, V, VOCAB, DATA,
 )
 

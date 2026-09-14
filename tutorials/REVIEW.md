@@ -1,4 +1,6 @@
-# Alpamayo 训练教程复习题（train1 ~ train4）
+# Alpamayo 训练教程复习题（train1 ~ train8）
+
+> 带字母的课（`train3b` / `train5a`）是补课，题号也带字母。
 
 > **用法**：先自己答，再翻到文末对答案。每题标了「考点」，答不上来就回去看那一行代码。
 > 答案在意不在字——说出关键点即可。
@@ -56,6 +58,26 @@
 
 ---
 
+## train3b — 轨迹怎么变成 token（补课）
+
+**3b-1** 你看到序列里出现 `<i32>`，能判断它属于哪个场景吗？为什么？
+<sub>考点：不能。三个场景的第一个 token 都是 `<i32>`（accel 都是 0）。
+含义在【整串】里，不在单个 token 上</sub>
+
+**3b-2** 真实里一条轨迹是几个 token？**128 这个数是怎么来的**？
+<sub>考点：64 waypoint × 2 维（加速度、曲率）。toy 里是 8 × 2 = 16 个</sub>
+
+**3b-3** `T.encode` 返回的是 bin 号（0~63），塞进序列前为什么要 `+ V["<i0>"]`？
+<sub>考点：`<i0>` 不在词表下标 0（前面还有 12 个固定 token）。
+真实里这一步叫 `tokenizer.traj_token_start_idx`</sub>
+
+**3b-4** 真实为什么用 3000 个 bin，不用 64 个？
+<sub>考点：bin 数决定量化误差（≈ 分辨率的一半）；但词表也跟着涨。
+3000 相对 ~15 万的自然语言词表只占 2%。
+第二层原因：128 个 token 一起描述一条轨迹，单个 bin 不需要多准</sub>
+
+---
+
 ## train4 — 阶段一完整 SFT
 
 **4-1** `others_mask = cot | eos_mask` —— `<eos>` 为什么要单独 `|` 进来？
@@ -76,25 +98,45 @@ assistant 回复的 eos（注释写着 "include the eos (+1) for supervision"）
 
 ---
 
-## train5 — SFT 阶段二（冻结 VLM + 训 expert）
+## train5a — flow matching（补课）
 
-**5-1** `train_expert` 里 expert 的**输入**是什么？它有 `condition` 参数吗？
+**5a-1** flow matching 为什么**不直接让模型输出轨迹**，而要绕一圈学「速度场」？
+<sub>考点：直接回归只会得到「条件均值」——多个合理的未来会被平均成
+一条不存在的轨迹（推理教程 stage8 讲过）</sub>
+
+**5a-2** `v_target = x1 - x0` 和 `t` 有关系吗？这说明什么？
+<sub>考点：**没有关系**——直线路径上速度恒定。这是 FM 比 DDPM 简单的地方
+（DDPM 要预测的是和 t 有关的东西）</sub>
+
+**5a-3** 采样 `x ← x + dt · v_model(x, t)` 里有随机性吗？那「生成多样性」从哪来？
+<sub>考点：没有随机性——同样的起点一定得到同样的终点。
+多样性在【起点】上做（初始噪声）</sub>
+
+**5a-4** 训练时 t 从 U(0,1) 采，采样时只积到 t=0.5 会怎样？
+<sub>考点：只走完路径一半，停在噪声和数据之间。
+模型没错，是你没走到终点。这类「训练/推理必须对齐」的坑不止这一处</sub>
+
+---
+
+## train5b — SFT 阶段二（冻结 VLM + 训 expert）
+
+**5b-1** `train_expert` 里 expert 的**输入**是什么？它有 `condition` 参数吗？
 <sub>考点：真实 `sft_alpamayo_r1.py:125` 的 forward 里，expert 收的是
 `inputs_embeds=action_embeds` + `past_key_values=kv_cache`</sub>
 
-**5-2** 为什么必须 `kv_cache.crop(...)`？**不裁**会怎样？（提示：训练时的序列里有什么）
+**5b-2** 为什么必须 `kv_cache.crop(...)`？**不裁**会怎样？（提示：训练时的序列里有什么）
 <sub>考点：teacher forcing 的序列里 `<traj_future_start>` 后面跟着【真值轨迹 token】，
 不裁就是把标准答案放进了 expert 的前缀里</sub>
 
-**5-3** 本课实测里，「不裁」那一版的**训练 fm_loss 和「裁」几乎一样**，但推理时明显更差。
+**5b-3** 本课实测里，「不裁」那一版的**训练 fm_loss 和「裁」几乎一样**，但推理时明显更差。
 为什么训练 loss 看不出来？
 <sub>考点：训练时 CoC 和轨迹 token 永远一致，expert 没有理由偏爱任何一个，
 于是学成「一半看 CoC、一半抄答案」——两边都用上了，loss 自然不会变差</sub>
 
-**5-4** `cotrain_vlm=False` 时 VLM 的梯度是多少？靠哪**两件**事保证？
+**5b-4** `cotrain_vlm=False` 时 VLM 的梯度是多少？靠哪**两件**事保证？
 <sub>考点：`torch.no_grad()` 包住 VLM forward + `cache.detach()`（`stop_grad_from_vlm`）</sub>
 
-**5-5** 既然 `cotrain_vlm=False` 已经用了 `torch.no_grad()`，那 `stop_grad_from_vlm`
+**5b-5** 既然 `cotrain_vlm=False` 已经用了 `torch.no_grad()`，那 `stop_grad_from_vlm`
 （把 cache 的 K/V detach）是不是多余的？它真正防的是哪种情况？
 <sub>考点：`cotrain_vlm=True` 时 forward 不在 no_grad 里，cache 是带图的；
 这时 detach 才是必须的——它让【expert 的 loss 不回流到 VLM】，

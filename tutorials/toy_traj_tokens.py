@@ -36,7 +36,7 @@ import torch
 
 N_WAYPOINTS = 8          # 真实 64
 DIMS = 2                 # (加速度, 曲率)
-NUM_BINS = 64            # 真实 3000。★ 这个数直接决定量化误差，见 train9
+NUM_BINS = 64            # 真实 3000。★ 这个数直接决定量化误差，见 train3b
 DIMS_MIN = (-9.8, -0.33)
 DIMS_MAX = (+9.8, +0.33)
 

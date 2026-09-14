@@ -1,6 +1,6 @@
 """train8: 逐行对照真实代码 —— 收口
 
-train1~7 每课讲一个机制。这一课把它们全部映射回真实文件，
+train1~7b 每课讲一个机制。这一课把它们全部映射回真实文件，
 并给出「打开哪个文件、看哪一段、对应哪一课」的清单。
 
 用法：先看下面的表，再按顺序打开真实文件读。每读一段，回来跑一下本课，
@@ -49,15 +49,15 @@ MAPPING = [
     ("train4", "轨迹 token 融进序列", "models/sft_base_model.py", "fuse_traj_tokens",
      "训练前把历史/未来的轨迹 token 填进占位符位置"),
     ("train4", "历史轨迹 token 化", "models/sft_base_model.py", "tokenize_history_trajectory", ""),
-    ("train5", "阶段二 forward", "models/sft_alpamayo_r1.py", "forward（第 125 行附近）",
+    ("train5b", "阶段二 forward", "models/sft_alpamayo_r1.py", "forward（第 125 行附近）",
      "五步：fuse → labels → VLM(no_grad) → crop/detach → expert"),
-    ("train5", "crop 掉真值轨迹", "models/sft_alpamayo_r1.py", "kv_cache.crop(last_traj_future_start_idx)",
+    ("train5b", "crop 掉真值轨迹", "models/sft_alpamayo_r1.py", "kv_cache.crop(last_traj_future_start_idx)",
      "train5 用「裁 vs 不裁」实测了不做这步的后果"),
-    ("train5", "冻结 VLM 的开关", "models/sft_alpamayo_r1.py", "cotrain_vlm / stop_grad_from_vlm",
+    ("train5b", "冻结 VLM 的开关", "models/sft_alpamayo_r1.py", "cotrain_vlm / stop_grad_from_vlm",
      "config 里 cotrain_vlm: false；train5 用梯度范数把这个开关打印出来了"),
-    ("train5", "expert 非因果", "models/sft_alpamayo_r1.py", "expert_non_causal_attention",
+    ("train5b", "expert 非因果", "models/sft_alpamayo_r1.py", "expert_non_causal_attention",
      "对应 toy 里 CacheBlock 的 causal=False"),
-    ("train5", "位置 id 的偏移", "models/sft_alpamayo_r1.py", "_process_position_ids_qwen2_5_vl",
+    ("train5b", "位置 id 的偏移", "models/sft_alpamayo_r1.py", "_process_position_ids_qwen2_5_vl",
      "rope_deltas + past_key_values.get_seq_length() —— toy 用可学习 pos_embed，省略了"),
     ("train6", "三段课程", "configs/sft_stage1_lingoqa.yaml", "defaults: 那几行",
      "三段各一个 yaml；对比 sft_stage1_nav.yaml / sft_stage2_nav.yaml 看它们换了什么"),
@@ -78,7 +78,7 @@ MAPPING = [
 LESSONS = {
     "train1": ("train1_lm_loss.py", "TinyLM"),
     "train2": ("train2_label_mask.py", "get_label_mask"),
-    "train5": ("train5_sft_stage2.py", "Stage2Model"),
+    "train5": ("train5b_sft_stage2.py", "Stage2Model"),
     "train6": ("train6_curriculum.py", "build_param_groups"),
     "train7": ("train7_memory.py", "zero_per_gpu"),
 }
