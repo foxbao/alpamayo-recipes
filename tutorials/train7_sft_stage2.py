@@ -234,4 +234,49 @@ if __name__ == "__main__":
         print(f"  cotrain_vlm={str(cotrain):<5}  VLM 梯度范数={gnorm(m.vlm):.3e}   "
               f"expert 梯度范数={gnorm(m.expert):.3e}")
     print("  → False 时 VLM 梯度精确为 0：`torch.no_grad()` + `cache.detach()` 双重保证。")
-    print("    这和推理教程 stage13 的 Part 1 / Part 2 是同一个开关的两个状态。")
+    print("    这和推理教程 stage13 的 Part 1 / Part 2 是同一个开关的两个状态。\n")
+
+    # ── 两个开关的分工：stop_grad_from_vlm 到底防什么？ ──
+    print("=" * 70)
+    print("两个开关的分工：stop_grad_from_vlm 到底防什么？")
+    print("=" * 70)
+    print("  真实代码里有【两条独立的路】通向 VLM（sft_alpamayo_r1.py）：")
+    print("     路 A：future_traj_loss → expert → kv_cache → VLM")
+    print("     路 B：vlm_outputs.loss（LM 交叉熵）→ VLM")
+    print("  `cotrain_vlm` 管的是【路 B 要不要】+ 参数冻不冻；")
+    print("  `stop_grad_from_vlm` 管的是【路 A 断不断】。\n")
+
+    def vlm_grad_norm(cotrain, stopgrad, use_lm_loss):
+        """把损失拆开，隔离出「路 A」的净效果。"""
+        torch.manual_seed(0)
+        m = Stage2Model(cotrain_vlm=cotrain, stop_grad_from_vlm=stopgrad)
+        m.train()
+        caches, vlm_loss = m.cache_for_expert(input_ids, img_feats, CROP_AT)
+        x1 = target_actions
+        x0 = torch.randn_like(x1)
+        t = torch.rand(len(samples))
+        x_t = (1 - t[:, None, None]) * x0 + t[:, None, None] * x1
+        fm = F.mse_loss(m.expert(x_t, t, caches), x1 - x0)
+        loss = fm + (vlm_loss if use_lm_loss else 0)
+        m.zero_grad(); loss.backward()
+        gs = [p.grad.norm().item() ** 2 for p in m.vlm.parameters() if p.grad is not None]
+        return sum(gs) ** 0.5
+
+    print(f"  {'cotrain':<10}{'stop_grad':<12}{'损失只含 expert':>18}{'再 +LM 损失':>16}")
+    print("  " + "-" * 58)
+    for cotrain in (False, True):
+        for stopgrad in (False, True):
+            a = vlm_grad_norm(cotrain, stopgrad, use_lm_loss=False)
+            b = vlm_grad_norm(cotrain, stopgrad, use_lm_loss=True)
+            print(f"  {str(cotrain):<10}{str(stopgrad):<12}{a:>18.4e}{b:>16.4e}")
+    print()
+    print("  ★ 看第 3 列（损失【只含】expert 的 flow-matching loss）——那才是「路 A」：")
+    print("      cotrain=True,  stop_grad=False → 回流发生，VLM 拿到非零梯度")
+    print("      cotrain=True,  stop_grad=True  → 被切断，VLM 拿到 0")
+    print("      cotrain=False（两种取值一样）→ no_grad 已让 cache 无计算图，")
+    print("        `detach` 此时【无事可做】。所以单看真实 config 那个组合，")
+    print("        它确实是多余的 —— 它防的是【另一个组合】。")
+    print()
+    print("  ★ 再看第 4 列（把 LM 损失加回去）：两者几乎相同（2.4494 vs 2.4492）。")
+    print("     因为真实训练里 VLM 的梯度被 LM 损失主导，回流那点量级小得多。")
+    print("     ⚠️ 所以【只看总梯度范数是看不出 detach 的作用的】——必须把损失拆开。")

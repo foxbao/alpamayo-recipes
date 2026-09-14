@@ -393,4 +393,66 @@ loss = F.mse_loss(model(x_t, t), x1 - x0)  # ← v_target 和 t 无关
 **模型没错，是你没走到终点。** 这类「训练/推理必须对齐」的坑不止这一处
 （推理教程 stage2 的 `temperature`、stage13 的 `MAX_LEN` 都是）。
 
+**7-1** 输入是 **`(x_t, t, caches)`** 三样，**没有 `condition` 参数** ——
+条件是从 `past_key_values` 进来的，不是一个额外入参。
+真实 forward 里对应 `expert(inputs_embeds=action_embeds, past_key_values=kv_cache,
+is_causal=False)`。
+
+**7-2** 训练是 teacher forcing，序列里 `<traj_future_start>` 后面**跟着真值的轨迹 token**
+（toy 16 个，真实 128 个）。不裁的话 expert 的前缀里就装着标准答案 —— **标签泄漏**，
+它只要抄就行了。
+
+**7-3** 因为**训练时 CoC 和答案永远一致**。teacher forcing 下「左转的 CoC」配的
+一定是「左转的 token」，所以对 leaky expert 来说，「看 CoC」和「抄答案」给出的是
+**同一个方向** —— 两边都用上完全不吃亏，`fm_loss` 自然不会变差。
+
+⚠️ 「训练都是从噪声开始」不构成解释：crop 版和不裁版**都是** `x0 = randn`，这点一样。
+
+泄漏只在**推理时**暴露 —— 那时前缀里没有答案了，但模型已经学会依赖它。实测：
+
+| 前缀里塞的真值轨迹 | crop 版 | 不裁版 |
+|---|---|---|
+| 左转的 16 个 token | +0.101 | +0.105 |
+| 右转的 16 个 token | +0.095 | **−0.097** |
+| 直行的 16 个 token | +0.100 | +0.007 |
+
+crop 版纹丝不动（那 16 个 token 根本没进 expert 的视野），不裁版跟着前缀翻转。
+
+**7-4** **精确为 0**（实测 `0.000e+00`）。靠两件事：
+
+| # | 机制 | 位置 |
+|---|---|---|
+| ① | `torch.no_grad()` 包住 VLM forward | `cache_for_expert` |
+| ② | `cache.detach()`（`stop_grad_from_vlm=True`） | 同处 |
+
+**7-5** ★ **在真实 config 那个组合下（`cotrain_vlm=False`）它确实是多余的** ——
+但它防的是**另一个组合**。
+
+真实代码有**两条独立的路**通向 VLM：
+
+```
+路 A：future_traj_loss → expert → kv_cache → VLM
+路 B：vlm_outputs.loss（LM 交叉熵） → VLM
+```
+
+- `cotrain_vlm` 管**路 B 要不要**（外加参数冻不冻）
+- `stop_grad_from_vlm` 管**路 A 断不断**
+
+实测（把损失拆开，隔离出「路 A」）：
+
+| cotrain_vlm | stop_grad | 损失只含 expert | 再 +LM 损失 |
+|---|---|---|---|
+| False | False | 0.0000e+00 | 0.0000e+00 |
+| False | True | 0.0000e+00 | 0.0000e+00 |
+| **True** | **False** | **6.0377e-02** | 2.4494e+00 |
+| **True** | **True** | **0.0000e+00** | 2.4492e+00 |
+
+- `cotrain_vlm=False`：`no_grad` 已让 cache 无计算图，**`detach` 无事可做**
+  （两种取值结果完全一样）⟹ 这个组合下它是多余的
+- `cotrain_vlm=True` + `stop_grad=False`：**回流真的发生**（6.04e-02）
+- `cotrain_vlm=True` + `stop_grad=True`：被切断（0）
+
+⚠️ **只看总梯度范数是看不出 detach 的作用的**（第 4 列：2.4494 vs 2.4492）——
+因为 VLM 的梯度被 LM 损失**主导**，回流那点量级小得多。必须把损失拆开才看得见。
+
 </details>
