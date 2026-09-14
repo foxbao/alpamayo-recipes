@@ -1,0 +1,197 @@
+# Alpamayo 训练教程复习题（train1 ~ train4）
+
+> **用法**：先自己答，再翻到文末对答案。每题标了「考点」，答不上来就回去看那一行代码。
+> 答案在意不在字——说出关键点即可。
+
+---
+
+## train1 — next-token CE（阶段一的本质）
+
+**1-1** `shift_logits = logits[:, :-1, :]`、`shift_labels = input_ids[:, 1:]`。
+为什么要**错开一位**？不错开、直接拿 `logits` 和 `input_ids` 算 CE，会怎样？
+<sub>考点：`logits[i]` 本来就看过 `input_ids[i]`，不错位就是让模型「抄当前位置的输入」</sub>
+
+**1-2** 初始 loss 是 `2.6187`，注释说「应接近 ln(11) = 2.40」。
+**为什么是 ln(词表大小)？** 词表变成 100，初始 loss 大概是多少？
+<sub>考点：随机初始化 → 输出近似均匀分布 `1/V` → CE = -log(1/V) = ln V</sub>
+
+**1-3** 训练后贪心续写一字不差地复现了训练序列。这能说明模型「学会了这条 CoC 的含义」吗？
+它实际说明的是什么？
+<sub>考点：单条样本 = 过拟合；说明的是「训练链路是通的」，是冒烟测试不是能力测试</sub>
+
+---
+
+## train2 — 标签掩码 + 那个「错一位」
+
+**2-1** mask 覆盖的是 `<cot_start> ~ <cot_end>`（**含两端**）。
+只覆盖中间的内容词（`construction blocks right lane change left`）不行吗？
+为什么头尾两个特殊 token 也要算 loss？
+<sub>考点：含 `<cot_end>` ⟹ 它成为目标 ⟹ 模型学会输出它 ⟹ 生成时知道该停；
+只 mask 内容词的话模型根本停不下来</sub>
+
+**2-2** 打印里「`9 lane` → `10 <cot_end>` ✓」被监督了。
+**被监督的是哪个位置的 label**——来源位置 9 的，还是目标位置 10 的？
+<sub>考点：`shift_labels = labels[:, 1:]`，目标永远取 i+1</sub>
+
+**2-3** ④ 里位置 2（`are`，被屏蔽）梯度是 `0.0000`。
+如果我**不加 mask**，但把整条 loss 乘个 `0.1`，位置 2 的梯度会是 0 吗？为什么？
+<sub>考点：乘系数改变梯度的【大小】不改变【有无】；`ignore_index` 是把该位置整个剔出平均，
+所以 `d(loss)/d(logits[2])` 精确为 0</sub>
+
+---
+
+## train3 — 两段损失
+
+**3-1** 「合起来算」时 traj 段只占 **33%**，「拆开算」变成 **50%**。
+33% 这个数**具体是从哪来的**？
+<sub>考点：4/12 —— 被 token 数量决定，而不是被「这段重不重要」决定</sub>
+
+**3-2** 拆开算是 `mean(cot 8个) + mean(traj 4个)` —— 注意是**相加**，不是加权平均。
+那么 traj 段的总权重是多少？cot 段呢？这个和「按 token 数加权平均」差在哪？
+<sub>考点：两段各占 1.0（相等），拆开 = 强行让轨迹段和文本段平起平坐</sub>
+
+**3-3** 你 stage13 里的 `loss = cot_loss + fm_loss` 和这里的「两段损失」是同一招吗？
+想清楚：`cot_loss` 是对哪些位置平均的？`fm_loss` 是对什么平均的？
+<sub>考点：同一招——每段各自求平均、再相加，等于人为指定各段权重</sub>
+
+---
+
+## train4 — 阶段一完整 SFT
+
+**4-1** `others_mask = cot | eos_mask` —— `<eos>` 为什么要单独 `|` 进来？
+**注意 train2 里 `<cot_end> → <eos>` 是 ✗**（不算 loss），两个文件对 `<eos>` 的处理不一致。
+哪个对？
+<sub>考点：真实代码里有两套 mask——`get_label_mask` 管区间，`get_assistant_mask` 管
+assistant 回复的 eos（注释写着 "include the eos (+1) for supervision"）。train4 更接近真实</sub>
+
+**4-2** 图片 embedding 拼在序列**最前面**，而 `head` 输出时又 `x[:, 1:, :]` 把第一个位置切掉。
+为什么可以切？不切会怎样？
+<sub>考点：切掉的是「图片位置」的输出。图片只是被「看」，不需要被「预测」；
+不切的话 logits 会多一位，和 labels 对不上</sub>
+
+**4-3** 训练时：**图片位置**的输出参与 loss 吗？**`<bos>` 位置**的输出参与吗？
+还有——`<bos>` 本身作为**目标**被预测过吗？（三个小问，答案不一样）
+<sub>考点：图片输出被切掉了，不参与；`<bos>` 的输出【参与】（用来预测 `<cot_start>`）；
+但 `<bos>` 从不作为目标（labels 位置 0 是 IGNORE）</sub>
+
+---
+
+## train5 — SFT 阶段二（冻结 VLM + 训 expert）
+
+**5-1** `train_expert` 里 expert 的**输入**是什么？它有 `condition` 参数吗？
+<sub>考点：真实 `sft_alpamayo_r1.py:125` 的 forward 里，expert 收的是
+`inputs_embeds=action_embeds` + `past_key_values=kv_cache`</sub>
+
+**5-2** 为什么必须 `kv_cache.crop(...)`？**不裁**会怎样？（提示：训练时的序列里有什么）
+<sub>考点：teacher forcing 的序列里 `<traj_future_start>` 后面跟着【真值轨迹 token】，
+不裁就是把标准答案放进了 expert 的前缀里</sub>
+
+**5-3** 本课实测里，「不裁」那一版的**训练 fm_loss 和「裁」几乎一样**，但推理时明显更差。
+为什么训练 loss 看不出来？
+<sub>考点：训练时 CoC 和轨迹 token 永远一致，expert 没有理由偏爱任何一个，
+于是学成「一半看 CoC、一半抄答案」——两边都用上了，loss 自然不会变差</sub>
+
+**5-4** `cotrain_vlm=False` 时 VLM 的梯度是多少？靠哪**两件**事保证？
+<sub>考点：`torch.no_grad()` 包住 VLM forward + `cache.detach()`（`stop_grad_from_vlm`）</sub>
+
+**5-5** 既然 `cotrain_vlm=False` 已经用了 `torch.no_grad()`，那 `stop_grad_from_vlm`
+（把 cache 的 K/V detach）是不是多余的？它真正防的是哪种情况？
+<sub>考点：`cotrain_vlm=True` 时 forward 不在 no_grad 里，cache 是带图的；
+这时 detach 才是必须的——它让【expert 的 loss 不回流到 VLM】，
+而 VLM 仍然能被 `vlm_outputs.loss` 训练。两个开关各管一条路</sub>
+
+---
+
+## train6 — 三段课程与训练技巧
+
+**6-1** 三段课程分别是什么？为什么 LingoQA 排在最前？
+<sub>考点：stage1_lingoqa（通用 VQA，先建立视觉-语言对齐）→ stage1_nav（驾驶推理 + 轨迹 token）
+→ stage2_nav（冻结 VLM，训 expert）</sub>
+
+**6-2** `lr_multiplier: {vlm.model.visual: 0.1}` —— 为什么**视觉塔**只给 1/10 学习率？
+<sub>考点：视觉特征来自预训练、最通用也最容易被打坏；驾驶数据规模远小于预训练，
+大 lr 会把 ViT 拉偏。语言塔要学新的 CoC 表达，得给足 lr</sub>
+
+**6-3** 如果同时写了 `{vlm: 0.5, vlm.model.visual: 0.1}`，视觉塔的参数会用哪个倍率？
+<sub>考点：**最长前缀匹配**——用更长的那条（0.1）</sub>
+
+**6-4** `stage1_vlm_checkpoint_path` 交接时，哪些权重被换掉、哪些保持原样？
+<sub>考点：只换 VLM；expert 保持发布模型（`nvidia/Alpamayo-1.5-10B`）里那份。
+（RL 那条线反过来：只导出 VLM，拿回 SFT 时 expert 随机初始化）</sub>
+
+---
+
+## train7 — 显存与分布式
+
+**7-1** 训练时一个参数占几份显存？**哪一块最大**？
+<sub>考点：权重 2B + 梯度 2B + 优化器状态 12B（fp32 主权重 4 + 一阶动量 4 + 二阶动量 4）
+= 16 字节；优化器状态占 75%</sub>
+
+**7-2** ZeRO 1 / 2 / 3 分别把什么切开？
+<sub>考点：1 切优化器状态；2 再切梯度；3 再切参数本身</sub>
+
+**7-3** 为什么 stage2 的 config 是 `deepspeed: null`（而 stage1 用 zero2）？
+<sub>考点：VLM 冻结 → 8B 参数不要梯度也不要优化器状态，只占权重；
+开销大头只剩 expert 的 ~27GB，一张 80GB 卡放得下</sub>
+
+**7-4** `ddp_find_unused_parameters` 为什么只在 **stage2** 是 `true`？
+<sub>考点：VLM 冻结 → 它的参数永远拿不到梯度。DDP 必须开这个开关去搜索
+「哪些参数没被用到」，否则直接报错。stage1 全模型都参与 loss，不需要</sub>
+
+**7-5** 既然要更大的 batch，为什么不直接把 `micro_batch_size` 调大，
+而要用 `gradient_accumulation_steps`？
+<sub>考点：【激活】显存 ∝ micro_batch_size × 序列长度，是唯一随 batch 线性涨的一块；
+梯度累积把等效 batch 做大，但同一时刻只有一个 micro-batch 的激活在显存里。代价是慢</sub>
+
+---
+
+## train8 — 逐行对照
+
+**8-1** 默写阶段二 forward 的**五步**（不必逐字，说清顺序和每步在干嘛）。
+<sub>考点：fuse_traj_tokens → labels(掩码) → VLM forward(no_grad) 拿 past_key_values
+→ crop + detach → expert(动作, cache) → action_out_proj → flow matching loss</sub>
+
+**8-2** 为什么说 `alpamayo-recipes` 是「**在已发布模型上继续训**」而不是「从头训一个 Alpamayo」？
+<sub>考点：`from_alpamayo_checkpoint` 的 docstring——按 config 建 VLM 架构（不加载 base 权重），
+再加载 checkpoint 里 fine-tuned 的 `vlm.*` 权重；`Qwen/Qwen3-VL-8B-Instruct` 只用来建
+tokenizer / processor 的架构</sub>
+
+---
+
+# 参考答案
+
+<details>
+<summary>点开查看（先自己答完再看）</summary>
+
+**1-1** 必须错开。`logits[i]` 是**看着 `input_ids[i]`** 算出来的（train1 里更是直接
+`head(embed(input_ids))`，第 i 个输出就是第 i 个输入的函数）。
+不错位的话，模型只要学会「把当前位置的输入抄一遍」就能把 loss 打到 0，**根本没在预测**。
+移位后 `logits[i]` 要预测 `input_ids[i+1]`，而这个 token 它没见过，只能靠上下文推。
+
+**1-2** 随机初始化时 logits 接近相同，softmax 出来接近**均匀分布** `1/V`，交叉熵
+`-log(1/V) = ln V`。V=11 → `ln 11 = 2.398`，实测 `2.6187`。
+实测**略大于** ln V 是因为 logits 不是完全均匀的：`-log` 是凸函数，由 Jensen 不等式
+`E[-log p] ≥ -log E[p]`，只要 p 不是严格均匀，CE 就 ≥ ln V。
+这个检查的意思是：初始 loss ≈ ln(词表大小) ⟹ 模型「均匀地懵逼」，没有初始化偏置。
+V=100 → `ln 100 = 4.605`。
+
+**1-3** 不能。单条样本训 300 步，模型基本是**背下来**了，这**不能**说明任何能力。
+它实际说明的是**训练链路是通的**：梯度能流、loss 能降、`argmax` 贪心解码能跑出完整序列。
+这是冒烟测试。（另外这里贪心解码**没用 KV cache**——每次都把 `gen` 整个重喂；
+stage13 的 `generate` 是同一个东西，只是多了 cache。）
+
+**2-1** mask 含 `<cot_end>` ⟹ `<cot_end>` 成为**目标** ⟹ 模型被监督着学会**输出**它
+⟹ 生成时知道该停。**只 mask 中间内容词的话**，`<cot_end>` 永远不是目标，
+生成时**根本停不下来**，一路跑到 `max_len`。
+`<cot_start>` 同理：监督它 = 学会从「读指令」切换到「开始推理」。
+这两个特殊 token 不是「顺便」算进去的，它们是**「何时开始 / 何时停」的唯一监督信号**。
+
+**2-2** 被监督的是 **10 号位置的 label**。机制在 `shift_labels = labels[:, 1:]`——
+目标永远取 `i+1`。对应行为：看着 `right lane`（到位置 9），输出 `<cot_end>`（位置 10）。
+
+**2-3** 不会是 0。**乘系数改变的是梯度的「大小」，不是「有无」**——`0.1 × (非零) ≠ 0`。
+而加了 mask 时梯度**精确等于 0.0000**（不是「很小」）：`cross_entropy(..., ignore_index=-100)`
+把 label=-100 的位置**从平均里整个剔除**，loss 里根本没有一项涉及位置 2 的 logits，
+所以 `d(loss)/d(logits[2]) = 0`。乘系数做不到这件事。
+
+</details>
