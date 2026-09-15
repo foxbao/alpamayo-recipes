@@ -1,0 +1,12 @@
+name: alpamayo-tutorials
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  # 教程全部是 CPU toy 实验；避免 conda 自动拉取 1GB+ 的 CUDA runtime。
+  # 如果希望用 GPU，直接使用已有的 qwen_vl 环境即可。
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cpu
+      - torch==2.8.0+cpu
+      - numpy>=1.26

@@ -38,7 +38,10 @@ decode 是反过来（`discrete_action_space.py:80`），多了第 ① 步的逆
 
 import torch
 
-import toy_traj_tokens as T
+if __package__:
+    from .tutorial_support import trajectory_tokenizer as T
+else:
+    from tutorial_support import trajectory_tokenizer as T
 
 REAL_NUM_BINS = 3000
 REAL_TOKENS_PER_TRAJ = 128

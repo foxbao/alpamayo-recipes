@@ -35,7 +35,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import toy_traj_tokens as T
+if __package__:
+    from .tutorial_support import trajectory_tokenizer as T
+else:
+    from tutorial_support import trajectory_tokenizer as T
 
 IGNORE_INDEX = -100
 HIDDEN = 32
@@ -224,6 +227,9 @@ def generate(model, img_feat, n_new):
 
 
 if __name__ == "__main__":
+    # 固定随机性，让教材输出（尤其是最后的贪心生成）可复现。
+    torch.manual_seed(0)
+    torch.set_num_threads(4)
     samples = [make_sample(*d) for d in DATA]
     input_ids = torch.stack([s[0] for s in samples])       # (3, L)
     img_feats = torch.stack([s[1] for s in samples])       # (3, IMG_DIM)

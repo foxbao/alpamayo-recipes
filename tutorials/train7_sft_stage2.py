@@ -9,7 +9,7 @@
 （⚠️ 本课 toy 的序列带 CoC；真实 nav 配置里不带，见 README「CoC 到底在哪」）
 阶段二换一条通路：**VLM 不动**，用它留下的 KV cache 当条件，训一个连续动作的 expert。
 
-模型与数据的定义在共享模块 `toy_stage2.py`（train8 也要用，所以抽出去了）；
+模型与数据的定义在共享模块 `tutorial_support/stage2_model.py`（train8 也要用，所以抽出去了）；
 本文件是【讲】这些的课——配着下面的注释和实测读。
 
 真实代码 `recipes/alpamayo1_5_sft/models/sft_alpamayo_r1.py:125` 的 forward，五步：
@@ -50,13 +50,22 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from toy_stage2 import (
-    IGNORE_INDEX, HIDDEN, N_LAYERS, N_HEADS, IMG_DIM, ACTION_DIM,
-    N_WAYPOINTS, N_STEPS, N_SAMPLES, BATCH_PER_SCENE, N_ITERS,
-    VOCAB, V, VOCAB_SIZE, DATA, make_sample,
-    CacheBlock, TinyVLM, crop_caches,
-    ActionInProj, TinyExpert, Stage2Model, train_vlm,
-)
+if __package__:
+    from .tutorial_support.stage2_model import (
+        IGNORE_INDEX, HIDDEN, N_LAYERS, N_HEADS, IMG_DIM, ACTION_DIM,
+        N_WAYPOINTS, N_STEPS, N_SAMPLES, BATCH_PER_SCENE, N_ITERS,
+        VOCAB, V, VOCAB_SIZE, DATA, make_sample,
+        CacheBlock, TinyVLM, crop_caches,
+        ActionInProj, TinyExpert, Stage2Model, train_vlm,
+    )
+else:
+    from tutorial_support.stage2_model import (
+        IGNORE_INDEX, HIDDEN, N_LAYERS, N_HEADS, IMG_DIM, ACTION_DIM,
+        N_WAYPOINTS, N_STEPS, N_SAMPLES, BATCH_PER_SCENE, N_ITERS,
+        VOCAB, V, VOCAB_SIZE, DATA, make_sample,
+        CacheBlock, TinyVLM, crop_caches,
+        ActionInProj, TinyExpert, Stage2Model, train_vlm,
+    )
 
 
 def train_expert(model, input_ids, img_feats, target_actions, crop_at,

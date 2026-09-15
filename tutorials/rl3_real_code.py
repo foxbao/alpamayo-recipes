@@ -1,6 +1,7 @@
 """rl3: RL 逐行对照 —— 收口
 
 【前置】rl1（GRPO 算法）、rl2（reward 设计）。本课把它们映射回真实文件。
+不要求你把 `recipes/alpamayo1_x_rl/` 全部读完；先沿着下面的最短路径走，再按需要展开。
 
 真实 RL 代码在 `recipes/alpamayo1_x_rl/`，架构和 SFT 完全不同：
 
@@ -18,7 +19,7 @@
     ① 代码地图：每个文件干什么
     ② rl1/rl2 的每个概念 → 落在哪个文件的哪一段
     ③ SFT vs RL 的关键差别（一张表）
-    ④ 建议的阅读顺序
+    ④ 最短阅读路径，以及哪些工程文件可以暂时跳过
 
 【简化】纯 CPU、秒级。本课不跑训练，只做映射与对照。
 """
@@ -103,6 +104,19 @@ MAPPING = [
     ("rl2", "把 token 解码回轨迹", "utils/trajectory_decode.py", "`decode_rollout_trajectory`"),
 ]
 
+# 这是“先理解算法，再理解系统”的最短路径。完整 CODE_MAP 适合查文件，
+# 不适合第一次阅读时从头到尾执行。
+MINIMUM_PATH = [
+    ("toml/alpamayo_rvla_rl_local_test.toml", "先看 G=12、clip、KL、同步频率等训练旋钮"),
+    ("rewards/traj_reward.py", "知道 rollout 如何变成 ADE"),
+    ("rewards/aggregated_reward.py", "看 comfort、权重和 ADE gate 如何合成 scalar reward"),
+    ("utils/trajectory_decode.py", "确认离散轨迹 token 如何还原成 xyz"),
+    ("models/reasoning_vla/rollout.py", "只读 rollout_generation：采样、logprob、reward 前的数据形态"),
+    ("models/reasoning_vla/trainer.py", "只读 step_training：old/ref/current logprob 和 GRPO loss"),
+    ("models/reasoning_vla/alpamayo_cosmos_rl_post_training_entry.py",
+     "最后看 Cosmos-RL 如何注册模型、rollout、trainer 和 reward"),
+]
+
 # ═══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     print("=" * 78)
@@ -137,7 +151,7 @@ if __name__ == "__main__":
         ("数据从哪来", "数据集里的真值序列", "模型自己采样出来的轨迹"),
         ("一个样本", "一条真值序列", "同一个 prompt 采 12 条（GRPO 的「组」）"),
         ("能不能并行", "整条序列一次前向反向", "必须先生成（不可导），再回传"),
-        ("损失里的项", "cot_loss + fm_loss（都是可导的）", "advantage × log p（score function）"),
+        ("损失里的项", "Stage 1: token CE；Stage 2: flow MSE", "advantage × log p（score function）"),
         ("训什么", "阶段一整个 VLM / 阶段二只训 expert", "★ 只训 VLM backbone（离散通路）"),
         ("要不要 critic", "不需要", "GRPO 也不需要（用组内均值当 baseline）"),
         ("学习率", "1e-5 量级", "2e-6（小一个量级）"),
@@ -157,24 +171,25 @@ if __name__ == "__main__":
     print("     这也是为什么 `utils/weight_mapper.py` 存在——两边权重名不一样。")
 
     print("\n" + "=" * 78)
-    print("④ 建议的阅读顺序")
+    print("④ 最短阅读路径")
     print("=" * 78)
-    order = [
-        ("toml/alpamayo_rvla_rl_local_test.toml", "先看超参，建立全景（组大小/裁剪/lr/reward 权重）"),
-        ("rewards/traj_reward.py", "29 行，最短，ADE 的定义"),
-        ("rewards/comfort_reward.py", "comfort 的 6 个硬边界"),
-        ("rewards/aggregated_reward.py", "gate 和聚合（rl2 讲的就是它）"),
-        ("rewards/aggregated_reward_with_reasoning.py", "多出来的 reasoning 项"),
-        ("utils/trajectory_decode.py", "token → xyz，reward 的输入从哪来"),
-        ("models/reasoning_vla/rollout.py", "531 行，采样那一步"),
-        ("models/reasoning_vla/trainer.py", "387 行，GRPO 的 loss"),
-        ("launcher.py + entry.py", "最后看入口，把上面串起来"),
-    ]
-    for i, (rel, why) in enumerate(order, 1):
-        print(f"  {i}. {rel:<52}{why}")
+    for i, (rel, why) in enumerate(MINIMUM_PATH, 1):
+        print(f"  {i}. {rel:<52} {why}")
+
+    print("\n  第一遍可以暂时跳过：")
+    print("     · rewards/comfort_reward.py：rl2 已经把判据复刻成 CPU toy；需要核对阈值时再读")
+    print("     · models/reasoning_vla/weight_mapper.py / utils/weight_loading.py：权重交接细节")
+    print("     · utils/fsdp.py：分布式切分细节，不改变 GRPO 数学")
+    print("     · prefetch/server.py：性能工程（1321 行），不是 reward 或 policy loss")
+
+    print("\n  如果要追踪 rl2 的 reasoning 分支，再从这里展开：")
+    print("     · rewards/aggregated_reward_with_reasoning.py：在 ADE + comfort 外加入 CoT grader")
+    print("     · models/reasoning_vla/alpamayo_cosmos_rl_post_training_reasoning_entry.py：")
+    print("       注册 reasoning reward，并切到 reasoning 数据集")
 
     print("\n  ⚠️ 读之前记住两件事：")
-    print("     · 这个仓库跑起来要 ≥5×80GB（真实配置 64+128 个 replica），")
+    print("     · 这个仓库的真实 RL 跑起来要多卡大显存（local test 至少 5×80GB，")
+    print("       README 展示的完整配置还有 64 policy + 128 rollout replica），")
     print("       所以本教程的 rl1/rl2 都刻意只做【算法层】，不碰基础设施。")
     print("     · 组内归一化那步在 `cosmos_rl` 包里，不在本仓库——")
     print("       trainer 只是取现成的 `rollout.advantage`。")

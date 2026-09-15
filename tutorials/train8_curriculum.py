@@ -64,9 +64,14 @@ train1~7 讲的是「一步训练里发生什么」。这一课讲**训练是怎
 import torch
 import torch.nn as nn
 
-from toy_stage2 import (
-    Stage2Model, TinyVLM, make_sample, train_vlm, V, VOCAB, DATA,
-)
+if __package__:
+    from .tutorial_support.stage2_model import (
+        Stage2Model, TinyVLM, make_sample, train_vlm, V, VOCAB, DATA,
+    )
+else:
+    from tutorial_support.stage2_model import (
+        Stage2Model, TinyVLM, make_sample, train_vlm, V, VOCAB, DATA,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════

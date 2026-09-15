@@ -229,7 +229,56 @@ SFT 阶段一  ──▶   RL   ──▶  SFT 阶段二  ──▶  发布模�
 | Stage 2 的 GT → action | `sft_alpamayo_r1.py:95` `traj_to_action` → `:102` `construct_training_data` |
 | Stage 2 的 loss | `sft_alpamayo_r1.py:204` `compute_loss_from_pred`（flow matching） |
 
-### ★ CoC 到底在哪（**可选项**，默认关，且 1.5 里没有）
+### ★ CoC 到底在哪、怎样训练（**Alpamayo 1 可选；1.5 当前 recipe 不提供**）
+
+CoC（chain-of-causation，因果链推理）本质上不是一个特殊的优化器，而是普通的
+**监督微调（SFT）**：数据集为每个驾驶片段提供一段文字推理 `cot`，模板把它放进
+`<cot_start> ... <cot_end>`，然后用 next-token cross-entropy 训练模型逐 token 生成。
+
+一条启用 CoC 的训练序列大致是：
+
+```text
+图片 + 历史轨迹 + 导航指令
+assistant: <cot_start> ...推理文本... <cot_end>
+           <traj_future_start> ...轨迹 token... <traj_future_end> <eos>
+```
+
+训练时需要同时满足三件事：
+
+1. 数据样本中真的有 `cot` 字段。PAI 数据集通过 `reasoning_metadata` 读取它，并用
+   `clip_index_metadata` 只枚举有推理标注的片段。
+2. chat template 的 `components_order` / `components_prompt` 包含 `cot`。
+3. `label_components` 包含 `cot`，这样 `<cot_start>`、推理内容和 `<cot_end>` 才会进入
+   loss；通常还会同时包含 `traj_future`。
+
+Alpamayo 1 的开源 recipe 提供了现成的 `recipes/alpamayo1_sft/configs/vla_processor/coc.yaml`，
+它把这三个列表设置为：
+
+```yaml
+components_order: [image, traj_history, prompt, cot, traj_future]
+components_prompt: [cot, traj_future]
+label_components: [cot, traj_future]
+```
+
+并且要按 `recipes/alpamayo1_sft/SKILL.md` 配好 reasoning parquet、reasoning clip index，
+以及 `use_default_keyframe=false`。漏掉数据侧配置时，常见报错是
+`cot not found in data` 或 `Event timestamp ... not found`。
+
+Alpamayo 1.5 的本仓库 recipe 没有 `coc.yaml`，其 `nav.yaml` 默认只监督
+`traj_future`。因此这里的 `train5` toy 序列虽然保留了 CoC，主要是为了讲清 label mask；
+它不是 1.5 当前公开 nav 配置的逐字复现。发布模型已有的 CoC 能力来自带 CoC 标注的训练
+checkpoint，RL 阶段则可以把 rollout 生成的 CoC 交给 Lingo-Judge 作为 reward，但那是
+**奖励模型打分**，不是把 CoC 再当作 token-level SFT 标签。
+
+最小的 CoC SFT 逻辑可以概括为：
+
+```python
+labels = torch.where(cot_mask | traj_mask, input_ids, IGNORE_INDEX)
+loss = cross_entropy(logits[:, :-1], labels[:, 1:], ignore_index=IGNORE_INDEX)
+```
+
+也就是说，模型学习的是“在当前图片、轨迹和提示条件下，生成这段标注推理以及后续轨迹”。
+它不会自动保证推理真的有用；要优化“推理是否帮助驾驶”，才需要后续 RL 的 reasoning reward。
 
 **推理时模型确实会先写 CoC 再出轨迹**（推教程 stage13/14 讲的都对）。
 但训练侧，「CoC 是不是监督目标」**取决于配置**，而这里有个容易踩的坑——
@@ -342,26 +391,56 @@ SFT stage1 (VLM) → RL (VLM + 离散轨迹) → SFT stage2 (expert 重新随机
 
 ## 课程路线
 
+本教程有**两层**：
+
+- **主课（1~10）** —— 按编号顺序读，一课的粒度是「一个能独立讲清的概念」
+- **拆分课（5a~5d / 7a~7d）** —— 把主课 `train5` / `train7` 里的**四个前置概念**
+  拆出来单独演示。**它们不是独立的一课，是主课的前置**
+
+> ⚠️ **推荐先读拆分课，再读主课。**
+> `train5_sft_stage1.py` 和 `train7_sft_stage2.py` 是「完整实现对照课」——
+> 一次性塞进了注意力、teacher forcing、图片前缀、两段损失四件事。
+> 先跟着 5a~5d 一件件看过，再回到 `train5` 看它们怎么组装起来，就不会觉得是黑盒。
+
+### 拆分课（建议先读）
+
+| 顺序 | 文件 | 只解决一个问题 |
+|---|---|---|
+| 5a | `train5a_attention.py` | causal self-attention 为什么不能看未来 |
+| 5b | `train5b_teacher_forcing.py` | teacher forcing 和自回归生成的区别 |
+| 5c | `train5c_image_conditioning.py` | 图片作为前缀 token 时怎样对齐 logits/labels |
+| 5d | `train5d_stage1_sft.py` | 把 mask、轨迹 token、图片和两段 loss 组装起来 |
+| 7a | `train7a_kv_cache.py` | KV cache 是怎样保存前缀条件的 |
+| 7b | `train7b_cache_crop.py` | 为什么要裁掉 teacher-forcing 的真值轨迹 |
+| 7c | `train7c_freeze_gradient.py` | 冻结 VLM 后梯度到底去哪了 |
+| 7d | `train7d_stage2_expert.py` | 阶段二 expert 训练的完整流程骨架 |
+
+每个拆分课都能单独运行。读完它们再跑 `train5_sft_stage1.py` / `train7_sft_stage2.py`。
+
+### 主课（完整路线）
+
 | 课 | 文件 | 学什么 |
 |---|---|---|
 | 1 | `train1_lm_loss.py` | 语言建模损失：next-token 交叉熵（阶段一的本质）✅ |
 | 2 | `train2_label_mask.py` | 标签掩码 + 错一位对齐：哪些 token 该算 loss ✅ |
 | 3 | `train3_two_losses.py` | 两段损失：future_traj + others 拆开算 ✅ |
 | 4 | `train4_traj_tokens.py` | 轨迹怎么量化成一串 token（`<iK>` 到底是什么）✅ |
-| 5 | `train5_sft_stage1.py` | 阶段一的机制组装：迷你 VLM SFT ✅ |
+| 5 | `train5_sft_stage1.py` | 阶段一的机制组装：迷你 VLM SFT（**前置：5a~5d**）✅ |
 | 6 | `train6_flow_matching.py` | flow matching 是什么（训练目标 + 欧拉采样）✅ |
-| 7 | `train7_sft_stage2.py` | **阶段二机制**：冻结 VLM + 训 expert（crop cache、`cotrain_vlm` 梯度对照）✅ |
+| 7 | `train7_sft_stage2.py` | **阶段二机制**：冻结 VLM + 训 expert（**前置：7a~7d**）✅ |
 | 8 | `train8_curriculum.py` | **三段课程与训练技巧**：LingoQA 为什么在前、`lr_multiplier` 视觉塔 0.1、checkpoint 交接 ✅ |
 | 9 | `train9_memory.py` | 显存与分布式：显存花在哪、ZeRO 1/2/3、为什么 stage2 不用 DeepSpeed ✅ |
 | 10 | `train10_real_code.py` | 逐行对照真实代码（把 1~9 的机制映射到行号）✅ |
 
-> **编号就是阅读顺序**，没有字母后缀 —— 一课的粒度就是「一个能独立讲清的概念」。
-> 结构上：`train1~5` 是**导入**（先讲清 loss 和序列长什么样），
-> `train6~7` 是**关键一跳**（flow matching + 阶段二怎么接上），
-> `train8~9` 是**工程**（课程设计、跑得动吗），`train10` 收口。
+> **主课的编号（1~10）就是阅读顺序**，本身没有字母后缀 ——
+> 结构上：`1~5` 是**导入**（先讲清 loss 和序列长什么样），
+> `6~7` 是**关键一跳**（flow matching + 阶段二怎么接上），
+> `8~9` 是**工程**（课程设计、跑得动吗），`10` 收口。
 >
-> `train4`（轨迹 token）和 `train6`（flow matching）之所以单独成课，是因为
+> `train4`（轨迹 token）和 `train6`（flow matching）之所以单独成主课，是因为
 > 它们各自是**独立主题**，混进别课会让人卡在一个没讲过的东西上。
+> 字母课（5a~5d / 7a~7d）则是把 `train5`/`train7` 里的概念**再拆细一层**——
+> 两者不是并列关系，是「前置 → 组装」的关系。
 
 ### ★ 每课需要推理教程（`alpamayo1.5/tutorials/`）的哪几节
 
@@ -371,22 +450,34 @@ SFT stage1 (VLM) → RL (VLM + 离散轨迹) → SFT stage2 (expert 重新随机
 |---|---|---|
 | train1~3 | — | 只用 `embed + head`，没有 attention |
 | **train4** | real1 | `<i0>`…`<i3999>` 那个词表怎么来的 |
-| **train5** | **stage9, stage13** | 突然出现 `CausalBlock`（自注意力）和因果 mask |
+| **train5a** | **stage9, stage13** | causal mask 是 5a 的全部内容；stage9 讲注意力本身 |
+| **train5b** | stage13 | teacher forcing 就是 stage13 的自回归对照 |
+| **train5c** | stage14 | 图片拼进多模态前缀，stage14 讲的就是这个 |
+| **train5d** | — | 只是把 5a~5c 组装起来 |
+| **train5**（主课） | 同上 | 组装版，前置知识同 5a~5d |
 | **train6** | **stage2, stage6** | flow matching 的采样循环与训练目标 |
-| **train7** | **stage13（尤其 Part 2）** | KV cache 当条件 —— 和 Part 2 是同一件事 |
+| **train7a** | **stage13 Part 2** | KV cache 当条件就是 Part 2 的做法 |
+| **train7b** | — | crop 是训练侧特有的，推理教程没有对应物 |
+| **train7c** | — | 梯度分析，纯 PyTorch |
+| **train7d** | stage6 | expert 的 flow matching 训练 |
+| **train7**（主课） | 同上 | 组装版，前置知识同 7a~7d |
 | train8 | — | 全是配置与课程设计，没有新机制 |
 | train9 | — | 显存算术 |
 | train10 | — | 纯映射 |
-| rl1 | — | 算法本身自足 |
-| rl2 | real5 | ADE / FDE 这些指标在 real5 里出现过 |
-| rl3 | — | 纯映射 |
+| rl1a~rl1c | — | 算法本身自足；`train1` 的 log-prob 可选回看 |
+| rl2a~rl2b | real5 | ADE / FDE 这些指标在 real5 里出现过 |
+| rl2c | — | reasoning reward 独立成进阶课 |
+| rl3a~rl3b | — | 纯系统概览与代码导航 |
 
-### 共享模块
+### 教程共享模块
+
+这些不是额外课程，而是多个 toy 课共用的最小实现。放进 `tutorial_support/` 是为了把
+“教材共享代码”和“按顺序阅读的课程”区分开。
 
 | 文件 | 是什么 | 谁在用 |
 |---|---|---|
-| `toy_traj_tokens.py` | 玩具版离散轨迹 tokenizer（镜像 `DiscreteTrajectoryTokenizer`） | train4 / train5 / train7 |
-| `toy_stage2.py` | 阶段二的模型与数据（`TinyVLM` / `TinyExpert` / `Stage2Model` / `make_sample`） | train7（讲）/ train8（用） |
+| `tutorial_support/trajectory_tokenizer.py` | 玩具版离散轨迹 tokenizer（镜像 `DiscreteTrajectoryTokenizer`） | train4 / train5 / train7 |
+| `tutorial_support/stage2_model.py` | 阶段二的模型与数据（`TinyVLM` / `TinyExpert` / `Stage2Model` / `make_sample`） | train7（讲）/ train8（用） |
 
 > 抽成模块是为了**别让一课硬依赖另一课的实现细节**：`train8_curriculum.py` 原本
 > 直接 `from train7_sft_stage2 import ...` 了 7 个名字，train7 一改它就可能悄悄坏掉。
@@ -394,7 +485,7 @@ SFT stage1 (VLM) → RL (VLM + 离散轨迹) → SFT stage2 (expert 重新随机
 
 ---
 
-## RL 轨道（rl1 ~ rl3）
+## RL 轨道（rl1a ~ rl3b）
 
 SFT 的损失优化的是「像不像真值」，但「像真值」≠「车开得好」——
 SFT 的 loss 里根本没有「好不好」这一项。RL 就是把 reward 变成梯度的办法。
@@ -403,14 +494,83 @@ SFT 的 loss 里根本没有「好不好」这一项。RL 就是把 reward 变�
 真实配置是 64 个 policy replica + 128 个 rollout replica）。
 所以本轨道**只做算法层**，不碰 Cosmos-RL 那套基础设施。
 
+### RL 轨道的推荐前置和阅读顺序
+
+不需要先完成 `train1~9`。最低前置是：
+
+| 课 | 真正需要的知识 | 建议回看 |
+|---|---|---|
+| `rl1a` | 采样、reward、log-prob、梯度下降 | `train1` 可选 |
+| `rl1b` | rl1a 的 log-prob 梯度、组内比较 | `rl1a` |
+| `rl1c` | rl1b 的方差实验 | `rl1b` |
+| `rl2a` | ADE、comfort 两个原始指标 | `real5` 可选，用来回看 ADE/FDE |
+| `rl2b` | 指标归一化、权重和 ADE gate | `rl2a` |
+| `rl2c` | CoC 抽取、grader、reasoning gate | `rl2b` |
+| `rl3a` | policy / rollout / controller 的系统分工 | `rl1c`、`rl2b` |
+| `rl3b` | 概念到真实文件的最短阅读路径 | `rl3a` |
+
+`rl1_grpo.py`、`rl2_reward.py`、`rl3_real_code.py` 仍然保留，作为每条细分路线完成后的
+“完整总览课”。第一次学习不建议从这三个总览文件开始。
+
 | 课 | 文件 | 学什么 |
 |---|---|---|
-| 1 | `rl1_grpo.py` | **GRPO 算法核心**：reward 不可导 → score function → 组内归一化省掉 critic ✅ |
-| 2 | `rl2_reward.py` | **reward 设计**：ADE + comfort、gate 的形状、reasoning reward ✅ |
-| 3 | `rl3_real_code.py` | 逐行对照真实代码 + SFT/RL 差别表 ✅ |
+| 1a | `rl1a_score_function.py` | reward 不可导时，如何用 score function 更新策略 |
+| 1b | `rl1b_grpo_advantage.py` | 组内均值、标准化和没有相对信号的边界 |
+| 1c | `rl1c_grpo_variance.py` | REINFORCE vs GRPO 的方差实验 |
+| 2a | `rl2a_motion_metrics.py` | ADE 与 comfort 的原始测量 |
+| 2b | `rl2b_reward_aggregation.py` | 权重、归一化和 ADE gate |
+| 2c | `rl2c_reasoning_reward.py` | CoC、Lingo-Judge 和 reasoning gate（进阶） |
+| 3a | `rl3a_system_overview.py` | policy / rollout / controller 的数据流 |
+| 3b | `rl3b_code_walkthrough.py` | 概念对应的真实文件和最短阅读路径 |
 
-> `rl1` 实测：GRPO 的梯度方差是 REINFORCE 的 **1/36**；给所有 reward 加同一个常数，
+推荐顺序：
+
+```text
+rl1a -> rl1b -> rl1c -> rl2a -> rl2b -> rl2c -> rl3a -> rl3b
+```
+
+其中 `rl2c` 可以在先完成 `rl3b` 后再回看；它需要额外理解外部 grader，
+不是 GRPO 主算法的前置。
+
+> `rl1c` 在当前 toy、随机种子和 `G=12` 下实测：GRPO 的梯度方差约为 REINFORCE 的 **1/33**；
+> 这个比例不是 GRPO 的固定常数。给所有 reward 加同一个常数，
 > advantage **完全不变**（这就是「相对」的含义，也是它能省掉 critic 的原因）。
+
+> RL 还有一个容易忽略的边界：如果同一个 prompt 的所有候选 reward 都相同，组内
+> advantage 就全是 0，GRPO 没有相对学习信号。这也是 `n_generation` 不能简单设成 1 的原因。
+
+## 运行环境
+
+仓库原来没有统一的 conda environment 文件；完整 recipe 的依赖写在各自的
+`recipes/*/pyproject.toml` 中。教程 toy 代码不需要 `alpamayo_r1`、vLLM、DeepSpeed
+或 Cosmos-RL，只需要 Python 和 PyTorch。仓库现在提供了：
+
+```text
+tutorials/environment-tutorials.yml   # conda 环境
+tutorials/requirements.txt            # pip 最小依赖
+```
+
+新建环境：
+
+```bash
+conda env create -f tutorials/environment-tutorials.yml
+conda activate alpamayo-tutorials
+python tutorials/train1_lm_loss.py
+```
+
+你机器上已有的 `qwen_vl` 也可以直接运行 toy 教程（已检查：Python 3.10、PyTorch 2.6、CUDA 可用）：
+
+```bash
+conda activate qwen_vl
+python tutorials/train5a_attention.py
+```
+
+如果只想运行新增的演示，推荐按 `5a -> 5b -> 5c -> 5d`，再按 `7a -> 7b -> 7c -> 7d`。
+从仓库根目录运行即可；这些脚本不依赖另一个 `alpamayo1.5` 仓库。
+
+完整 SFT / RL recipe 是另一种环境：需要 Python 3.12、PyTorch 2.8，以及
+`flash-attn`、DeepSpeed、vLLM、Cosmos-RL 等依赖；其中 RL 的真实配置还需要多卡 GPU。
+不要为了运行 toy 教程安装这套环境。
 
 > ⚠️ RL 训的是 **VLM backbone**（走**离散轨迹 token** 那条通路），
 > 不是 SFT 阶段二那个连续 action expert。所以 RL 导出的 checkpoint
@@ -430,7 +590,7 @@ SFT 的 loss 里根本没有「好不好」这一项。RL 就是把 reward 变�
 | `<eos>` 也监督 | 同文件的 `get_role_eos_mask` / `get_assistant_mask`（注释：*include the eos (+1) for supervision*） |
 | 两段损失 | `sft_base_model.py:388-407`（`future_traj` / `others`） |
 | 轨迹 token 融进序列 | `sft_base_model.py` `fuse_traj_tokens` / `tokenize_history_trajectory` |
-| **轨迹量化成 token** | `src/alpamayo1_5/action_space/discrete_action_space.py:47` `DiscreteTrajectoryTokenizer.encode`（train4；toy 版是 `toy_traj_tokens.py`） |
+| **轨迹量化成 token** | `src/alpamayo1_5/action_space/discrete_action_space.py:47` `DiscreteTrajectoryTokenizer.encode`（train4；toy 版是 `tutorial_support/trajectory_tokenizer.py`） |
 | 造 `<i0>`…`<i3999>` 词表 | `src/alpamayo1_5/models/base_model.py:271`（train4） |
 | 推理时屏蔽这些 token | `src/alpamayo1_5/models/alpamayo1_5.py:48` `ExpertLogitsProcessor`（train4） |
 | 阶段二（冻结 + expert） | `recipes/alpamayo1_5_sft/models/sft_alpamayo_r1.py:125` `forward` |

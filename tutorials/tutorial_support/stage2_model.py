@@ -1,4 +1,4 @@
-"""玩具版「阶段二」的模型与数据 —— train7 和 train8 共用
+"""教程共享的阶段二 toy 模型与数据 —— train7 和 train8 共用。
 
 真实对应：recipes/alpamayo1_5_sft/models/sft_alpamayo_r1.py
           （VLM + action expert + crop + 两个开关）
@@ -13,7 +13,7 @@ train7 是【讲】这些的课（配着注释读它）；train8 只是【用】
 checkpoint 交接演示。放这里是为了让 train8 不依赖 train7 的实现细节——
 本文件改了 API，train7/train8 会一起编译不过，不会出现「一个悄悄坏掉」。
 
-更完整的分工见 README 的课程路线。
+更完整的分工见 README 的课程路线。这个文件是共享实现，不是一节额外课程。
 """
 
 import math
@@ -22,7 +22,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import toy_traj_tokens as T
+from . import trajectory_tokenizer as T
 
 IGNORE_INDEX = -100
 HIDDEN = 32

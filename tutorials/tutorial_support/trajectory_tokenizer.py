@@ -1,6 +1,9 @@
-"""玩具版离散轨迹 tokenizer —— 镜像真实的 DiscreteTrajectoryTokenizer
+"""教程共享的离散轨迹 tokenizer。
 
-用法：`from toy_traj_tokens import encode, decode, NUM_BINS, N_WAYPOINTS`
+它是教学用的简化版，不是 Alpamayo 的生产 tokenizer；只负责连续轨迹和
+离散 `<iK>` token 之间的 encode/decode。
+
+用法：`from tutorial_support.trajectory_tokenizer import encode, decode`
 
 真实代码 `src/alpamayo1_5/action_space/discrete_action_space.py:47` 的 encode 就四步：
 

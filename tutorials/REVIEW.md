@@ -1,5 +1,4 @@
-# Alpamayo 训练教程复习题（train1 ~ train10）
-
+# Alpamayo 训练教程复习题（train1 ~ train10，含 5a~5d / 7a~7d / rl1a~rl3b）
 
 > **用法**：先自己答，再翻到文末对答案。每题标了「考点」，答不上来就回去看那一行代码。
 > 答案在意不在字——说出关键点即可。
@@ -82,6 +81,37 @@
 
 ## train5 — 阶段一完整 SFT
 
+> ⚠️ **题目顺序 = 阅读顺序**：先做拆分课 5a~5d（把概念一件件拆开），
+> 再做主课 train5（看它们怎么组装）。
+
+### 拆分课 train5a~5d
+
+**5a-1** causal mask 的上三角为什么填 `-inf`，而不是填 0？
+<sub>考点：mask 加在 softmax 前；`exp(-inf)=0`，未来位置的注意力权重才会精确为 0；加 0 等于没有屏蔽。</sub>
+
+**5a-2** 只修改位置 3 的输入，为什么无 mask 时位置 1 的输出会变化，而有 mask 时不变？
+<sub>考点：无 mask 时位置 1 读取了未来位置 3；causal mask 只允许读取当前位置及之前的位置。</sub>
+
+**5b-1** 训练时为什么可以一次喂完整序列，而生成时必须循环？
+<sub>考点：teacher forcing 时真实前缀已经在 input_ids 中，可以并行算所有位置；生成时未来 token 未知，只能每次追加一个预测。</sub>
+
+**5b-2** 错误的 same-position loss 也能降到很低，为什么这不是训练成功？
+<sub>考点：模型学会复制当前输入；从 `<bos>` 生成时只能复制 `<bos>`，没有学会 next-token 映射。</sub>
+
+**5c-1** 图片前缀使 transformer 长度从 L 变成什么？为什么最后还要得到 L 个 logits？
+<sub>考点：内部长度是 L+1；图片位置是条件而不是语言目标，所以切掉第 0 个输出，保留 L 个文本位置。</sub>
+
+**5c-2** 交换图片、保持 `<bos>` 不变后预测改变，说明图片真的被使用了吗？还需要注意什么？
+<sub>考点：说明模型能从图片条件区分样本；但 toy 只有两张图，不能据此证明泛化能力。</sub>
+
+**5d-1** `trajectory loss` 和 `others loss` 为什么要分开打印？
+<sub>考点：分开后能看出不同片段是否学习正常，也能看出分段平均改变了各片段的相对权重。</sub>
+
+**5d-2** train5d 的 toy 序列里有 CoC；它是否等同于 1.5 的默认 nav 配置？
+<sub>考点：不等同。toy 为了教学保留 CoC；1.5 的 `nav.yaml` 默认只把 `traj_future` 放进 components/labels。</sub>
+
+### 主课 train5（组装版）
+
 **5-1** `others_mask = cot | eos_mask` —— `<eos>` 为什么要单独 `|` 进来？
 **注意 train2 里 `<cot_end> → <eos>` 是 ✗**（不算 loss），两个文件对 `<eos>` 的处理不一致。
 哪个对？
@@ -121,6 +151,36 @@ assistant 回复的 eos（注释写着 "include the eos (+1) for supervision"）
 ---
 
 ## train7 — SFT 阶段二（冻结 VLM + 训 expert）
+
+> ⚠️ **题目顺序 = 阅读顺序**：先做拆分课 7a~7d，再做主课 train7。
+
+### 拆分课 train7a~7d
+
+**7a-1** 一个 cache 为什么有一份 K 和一份 V，而且每层都有自己的 K/V？
+<sub>考点：每个 attention layer 都有独立的投影和状态；K 用来和 query 算相似度，V 是被加权读取的内容。</sub>
+
+**7a-2** expert 为什么不需要额外的 `condition` 参数？
+<sub>考点：条件已经作为每层 attention 的 `past_key_values` 传入；expert 的 action query 会读取这些前缀 K/V。</sub>
+
+**7b-1** crop 应该保留到哪个 token？
+<sub>考点：保留 `<traj_future_start>` 本身，裁掉它后面的真值 `<iK>`、`<traj_future_end>` 等答案 token；还要计入前面的图片位置。</sub>
+
+**7b-2** 为什么标签泄漏时训练 fm_loss 可能不变差？
+<sub>考点：训练中 CoC 和真值轨迹始终配对，抄答案与读 CoC 得到同一方向；问题只在推理时答案不存在才暴露。</sub>
+
+**7c-1** `cotrain_vlm=True, stop_grad_from_vlm=False` 时，哪一个 loss 会把梯度传回 VLM？
+<sub>考点：expert 的 flow-matching loss 可以沿 cache 回传；额外的 VLM LM loss 也可以训练 VLM。</sub>
+
+**7c-2** `cotrain_vlm=False` 时为什么两个 stop_grad 选项结果一样？
+<sub>考点：VLM 已经在 `torch.no_grad()` 中运行，cache 根本没有计算图；detach 在该组合下没有额外作用。</sub>
+
+**7d-1** 阶段二和阶段一的监督信号分别是什么？
+<sub>考点：阶段一是离散 token 的 next-token CE；阶段二是连续 action 的 flow-matching MSE，VLM 只提供条件。</sub>
+
+**7d-2** 采样时为什么还要从随机噪声开始？
+<sub>考点：expert 学的是从 `x0` 到 `x1` 的速度场；不同噪声起点可以产生不同样本，Euler 积分本身是确定的。</sub>
+
+### 主课 train7（组装版）
 
 **7-1** `train_expert` 里 expert 的**输入**是什么？它有 `condition` 参数吗？
 <sub>考点：真实 `sft_alpamayo_r1.py:125` 的 forward 里，expert 收的是
@@ -199,6 +259,32 @@ assistant 回复的 eos（注释写着 "include the eos (+1) for supervision"）
 <sub>考点：`from_alpamayo_checkpoint` 的 docstring——按 config 建 VLM 架构（不加载 base 权重），
 再加载 checkpoint 里 fine-tuned 的 `vlm.*` 权重；`Qwen/Qwen3-VL-8B-Instruct` 只用来建
 tokenizer / processor 的架构</sub>
+
+## RL 轨道 — rl1a~rl3b
+
+**RL1a-1** reward 不可导时，为什么仍然可以更新策略？写出 score-function 的核心形式。
+<sub>考点：不对采样过程求导，而用 `reward × grad(log_prob)` 的期望估计策略梯度。</sub>
+
+**RL1b-1** 同一个 prompt 的所有候选 reward 都相同，或者 `G=1`，为什么 GRPO 没有相对更新信号？
+<sub>考点：组内减均值后全为 0；没有“谁相对更好”的信息。</sub>
+
+**RL1c-1** `rl1c` 为什么把梯度归一化后用固定 `STEP_SIZE` 更新？这能不能拿来比较真实训练的收敛速度？
+<sub>考点：toy 只想比较更新方向，避免 GRPO 因梯度范数较小而被误判为更慢；不能当真实收敛 benchmark。</sub>
+
+**RL2a-1** `calculate_ade` 为什么只看 XY，不看 Z？`comfort` 为什么只要一个时间点越界就可能让整项失效？
+<sub>考点：真实 reward 的 ADE 明确只取平面位置；comfort 的 `_within_bound` 对时间维使用 `torch.all`，不是时间比例。</sub>
+
+**RL2b-1** ADE 从 `2.99` 变成 `3.00` 时 reward 为什么会突然跳到 `-1`？这种 gate 对优化有什么影响？
+<sub>考点：代码使用严格的 `l2_dist < 3.0`；它把样本分成通过/不通过两类，但“避免错误轨迹微调”只是可能效果，不是数学必然。</sub>
+
+**RL2c-1** reasoning reward 里的 `raw_score` 为什么先减 `1.0`？当 `raw_score=0.6` 时为什么仍然不通过？
+<sub>考点：`reasoning_score = raw_score - 1` 映射到约 `[-1,0]`；gate 用严格的 `reasoning_score > -0.4`，等号不通过。</sub>
+
+**RL3b-1** 真实 `trainer.py` 为什么直接读取 `rollout.advantage`，而不是在文件里重新计算组内均值？
+<sub>考点：Cosmos-RL 在 rollout/框架侧准备 advantage；本仓库 trainer 负责把它扩展到 token、算 current/old/ref log-prob 和 policy loss。</sub>
+
+**RL3b-2** `rl3b` 推荐先读哪些文件？为什么第一遍可以跳过 `prefetch/server.py`、FSDP 和权重映射？
+<sub>考点：先 config → ADE/reward → token decode → rollout → trainer；后面三者是性能、分布式和权重交接细节，不改变 GRPO 的主数学链路。</sub>
 
 ---
 
@@ -454,5 +540,37 @@ crop 版纹丝不动（那 16 个 token 根本没进 expert 的视野），不�
 
 ⚠️ **只看总梯度范数是看不出 detach 的作用的**（第 4 列：2.4494 vs 2.4492）——
 因为 VLM 的梯度被 LM 损失**主导**，回流那点量级小得多。必须把损失拆开才看得见。
+
+</details>
+
+<details>
+<summary><strong>RL 轨道参考答案（rl1a~rl3b）</strong></summary>
+
+**RL1a-1** reward 不可导不等于不能训练。对采样结果 `y ~ πθ` 使用
+`∇J ≈ reward(y) · ∇log πθ(y)`，也就是只对 log-prob 求导。
+
+**RL1b-1** 组内 advantage 是 `(r - mean(r)) / std(r)`。如果所有 reward 一样，分子全为 0；
+`G=1` 时没有组内比较，因此本课显式把 advantage 定义为 0。
+
+**RL1c-1** `train()` 把每次梯度缩放到同一个固定范数，再乘 `STEP_SIZE`，只比较方向质量。
+它不是和真实 AdamW 学习率相同的实验，也不能据此声称 GRPO 收敛更快。
+
+**RL2a-1** 真实 `calculate_ade` 对最后一维前两坐标做 L2，再对 waypoint 求平均；
+comfort 的 `_within_bound` 沿时间维 `torch.all`，所以一帧越界会让对应指标得 0，
+最后六项取平均后再减 1。
+
+**RL2b-1** 代码条件是严格的 `l2_dist < 3.0`，不满足就固定 `-1.0`，因此 3.0 处不连续。
+它可能让优化更关注先跨过可接受阈值，但不能把这个效果当作定理。
+
+**RL2c-1** grader 输出是约 `0~1` 的质量概率；减 1 后得到约 `[-1,0]`，便于和负向阈值比较。
+`0.6 - 1 = -0.4`，而代码是 `> -0.4`，所以等号仍被 gate 拒绝。
+通过 gate 后，代码把 `[-0.4, 0]` 映射到 `[0, 1]`，避免负数直接除以负阈值造成奖励方向反转。
+
+**RL3b-1** advantage 由 Cosmos-RL 的 rollout/训练框架准备；本仓库的 `step_training()` 取出它，
+扩展到每个有效 token，再与 current/old/reference log-prob 交给 `compute_loss`。
+
+**RL3b-2** 最短路径是 TOML → `traj_reward.py` → `aggregated_reward.py` →
+`trajectory_decode.py` → `rollout_generation` → `step_training` → entry。prefetch 是缓存性能工程，
+FSDP 是参数切分，weight mapper 是 checkpoint 交接；第一遍跳过它们不会漏掉 GRPO 的主链路。
 
 </details>

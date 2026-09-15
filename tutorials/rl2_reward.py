@@ -1,6 +1,8 @@
 """rl2: reward 怎么设计 —— ADE + comfort，以及那个「gate」
 
-【前置】rl1（GRPO 为什么需要 reward）。本课讲 reward 本身。
+【前置】rl1（GRPO 为什么需要 reward）。本课把 reward 拆成三层，按顺序看：
+  ① ADE：轨迹位置偏不偏；② comfort：动作是否越过动力学边界；
+  ③ reasoning：CoC 是否通过外部 grader。不要把三者当成同一种指标。
 
 真实代码两份（`recipes/alpamayo1_x_rl/rewards/`）：
 
@@ -129,8 +131,8 @@ if __name__ == "__main__":
         print(row)
     print("\n  ★ 看 ADE = 2.99 → 3.0 那一跳：reward 从约 -0.40 直接掉到 -1.00。")
     print("     这就是 gate 的形状：**过了阈值就没有「差不多好」，一律 -1**。")
-    print("     它的作用是把「根本没走对」和「走得还行」彻底分开，")
-    print("     避免模型在错误轨迹上做微调。")
+    print("     从优化角度看，它把错误轨迹和可接受轨迹分成两类；")
+    print("     ‘避免在错误轨迹上微调’是这种设计的可能效果，不是 ADE 本身的数学结论。")
 
     # ── reasoning ──
     print()
@@ -143,17 +145,28 @@ if __name__ == "__main__":
     print("      # pred_cot 是从 rollout 里 extract_between_special_tokens(..., 'cot') 抠出来的")
     print()
     print(f"      if 抠到 CoC  and  reasoning_score > {REASONING_THRESHOLD}  and  ADE < {ADE_THRESHOLD}:")
-    print("          reward = -0.4·(ADE/3) + 0.1·comfort + w_reasoning·(reasoning_score / -0.4)")
+    print("          reasoning_norm = (reasoning_score - (-0.4)) / (0 - (-0.4))")
+    print("          reward = -0.4·(ADE/3) + 0.1·comfort + w_reasoning·reasoning_norm")
     print("      else:")
     print("          reward = -1.0")
     print()
-    print(f"  → 两个阈值各自归一化：ADE 除 3.0，reasoning 除 {REASONING_THRESHOLD}。")
+    print("  → ADE 除 3.0；reasoning 在通过 gate 后从 [-0.4, 0] 映射到 [0, 1]。")
     print(f"  → reasoning_score 必须 > {REASONING_THRESHOLD}（即原始打分 > "
           f"{1 + REASONING_THRESHOLD:.1f}），否则整个样本 -1。")
     print("  → 这条 gate 的意思是：**推理写得不对，轨迹再好也不给分**。")
     print("     这正是「让 reasoning 真的参与优化」的机制——SFT 阶段做不到这件事")
     print("     （SFT 只能让 CoC 像真值，不能让它'对结果有用'）。")
+    print("\n  让阈值和归一化具体一点（假设 grader 原始输出在 0~1）：")
+    print(f"  {'raw grader':>12}{'reasoning_score':>18}{'通过 gate?':>12}{'归一化项':>14}")
+    print("  " + "-" * 60)
+    for raw in (0.4, 0.6, 0.8, 1.0):
+        score = raw - 1.0
+        passes = score > REASONING_THRESHOLD
+        normalized = (score - REASONING_THRESHOLD) / (0.0 - REASONING_THRESHOLD)
+        print(f"  {raw:>12.1f}{score:>18.1f}{str(passes):>12}{normalized:>14.2f}")
+    print("  → raw=0.6 时 score=-0.4；代码使用严格的 >，所以它仍然不通过。")
     print()
     print("  ⚠️ demo 版（`aggregated_reward.py`）**只**打分轨迹，不碰 CoC。")
     print("     README 明确写了这一点，并说 Alpamayo 1.5 是用 reasoning reward 训的。")
     print("     所以想复现 1.5 的效果，光用 demo 的 reward 是不够的。")
+    print("     但 reasoning reward 也不是 token-level 正确答案：它只在整段 rollout 完成后给分。")
