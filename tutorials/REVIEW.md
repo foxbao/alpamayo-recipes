@@ -779,6 +779,40 @@ CoC 固定成 `turn left`，**只换前缀里的答案**：
 
 这就是「训练 loss 骗人」的完整机制：**loss 没变差，但模型学到的东西已经完全不同了。**
 
+**7c-1** 这题的关键是「**有两条路**」，只答一条不算完：
+
+```
+真实代码里【两条】独立的路通向 VLM：
+
+  路 A：future_traj_loss → expert → kv_cache → VLM
+        · 你答的这条（沿 cache 回传）
+        · stop_grad_from_vlm 管它断不断
+
+  路 B：vlm_outputs.loss（LM 交叉熵）→ VLM
+        · 不经过 cache ！
+        · cotrain_vlm 管它要不要（`loss += vlm_outputs.loss`）
+```
+
+所以答案是：
+
+1. **expert 的 flow-matching loss** —— 沿 cache 回传（**本课表格测的就是它**）
+2. **VLM 自己的 LM 交叉熵 loss** —— 不经过 cache，完全独立的一条路
+
+⚠️ **本课的表格【只含路 A】**（刻意排除 LM loss，否则 VLM 梯度被它主导，
+看不出 cache 那条路通不通）。所以别以为「VLM 的梯度只能从 cache 来」。
+
+> 这正是 `7-5`（`stop_grad_from_vlm` 是不是多余）难的原因——**没把两条路分开**。
+
+**7c-2** 因为 `cotrain_vlm=False` 时 VLM 在 `torch.no_grad()` 下跑
+→ **cache 根本没有计算图**（前向时就没建）
+→ `detach()` 作用在一个**没有图的张量**上，**无事可做**。
+
+⚠️ 精确区别：**不是**「梯度传回来后又被挡住」，**而是「梯度这条路压根不存在」**。
+
+`detach()` 只能切**已经存在的**图；图都没建，它就是个空操作。
+
+（看表也能验证：`False + False` 和 `False + True` 两行**一字不差**。）
+
 </details>
 
 <details>
