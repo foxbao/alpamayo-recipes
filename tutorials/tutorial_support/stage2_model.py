@@ -22,7 +22,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from . import trajectory_tokenizer as T
+if __package__:
+    # 正常情况：被 train7* / train8 当包导入
+    from . import trajectory_tokenizer as T
+else:
+    # 直接运行本文件时没有父包，退化成同级导入（好让 __main__ 的提示能打出来）
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import trajectory_tokenizer as T
 
 IGNORE_INDEX = -100
 HIDDEN = 32
@@ -237,3 +246,19 @@ def train_vlm(model, input_ids, img_feats, n_iters=300, lr=5e-3):
                                input_ids[:, 1:].reshape(-1))
         opt.zero_grad(); loss.backward(); opt.step()
     return loss.item()
+
+
+if __name__ == "__main__":
+    # 这是【共享模块】不是一节额外的课。直接跑它会撞上相对导入错误
+    # （`from . import trajectory_tokenizer`），所以在这里给个明确的指引。
+    print(__doc__)
+    print("-" * 66)
+    print("⚠️  这是一个【共享模块】，不是课 —— 直接运行它不会有输出。")
+    print()
+    print("    想学这里的内容，请运行用到它的课：")
+    print("      python train7a_kv_cache.py         # KV cache 怎样保存前缀条件")
+    print("      python train7b_cache_crop.py       # 为什么要裁掉真值轨迹")
+    print("      python train7c_freeze_gradient.py  # 两个开关各自管哪条梯度路")
+    print("      python train7d_stage2_expert.py    # 阶段二 expert 训练骨架")
+    print("      python train7_sft_stage2.py        # 主课：阶段二完整机制")
+    print("      python train8_curriculum.py        # 三段课程（用到这里的模型）")

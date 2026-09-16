@@ -4,6 +4,8 @@
 你会看到：QK^T 的分数、mask 后的注意力权重，以及未来 token 泄漏的后果。
 """
 
+from __future__ import annotations
+
 import math
 
 import torch

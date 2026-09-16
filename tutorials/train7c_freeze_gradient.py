@@ -10,6 +10,8 @@
    那条 LM 路径独立于 cache，本课的表格刻意把它排除在外。
 """
 
+from __future__ import annotations
+
 import torch
 import torch.nn.functional as F
 

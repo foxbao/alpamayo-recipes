@@ -4,6 +4,8 @@
 读取图片；图片位置自身不预测语言 token。轨迹和 masked loss 留给 train5d。
 """
 
+from __future__ import annotations
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

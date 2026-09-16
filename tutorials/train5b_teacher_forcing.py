@@ -4,6 +4,8 @@
 训练时整条序列一次前向；生成时只能拿已经生成的前缀。
 """
 
+from __future__ import annotations
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

@@ -1,3 +1,20 @@
+# Alpamayo 训练教程（toy）的最小依赖 —— 纯 CPU、秒级。
+#
+# ⚠️ 这不是完整 recipe 的依赖。真实 SFT / RL 是另一套（Python==3.12 + torch 2.8
+#    + transformers + vllm + deepspeed + cosmos-rl），见 recipes/*/pyproject.toml。
+#    不要为了跑 toy 教程去装那一套。
+#
+# ── Python 版本 ──
+#   代码本身：>= 3.8
+#       实测 3.8.20 + torch 1.12 与 3.12.9 + torch 2.8 下，31 节课全部跑通。
+#       （3.8 / 3.9 依赖源码里的 `from __future__ import annotations`，已经在用了。）
+#   但下面锁的 torch 2.8.0 自身要求 Python >= 3.9。
+#   所以：
+#     · 用这个文件装            → 需要 Python >= 3.9
+#     · 已有旧的 Python + torch → 直接跑就行（如 3.8 + torch 1.12），不必重装
+#
+# 最省事的做法：用 tutorials/environment-tutorials.yml（python=3.12 + 本文件）。
+
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.8.0+cpu
 numpy>=1.26
