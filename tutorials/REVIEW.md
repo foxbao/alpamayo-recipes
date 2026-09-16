@@ -209,19 +209,22 @@ assistant 回复的 eos（注释写着 "include the eos (+1) for supervision"）
 ## train8 — 三段课程与训练技巧
 
 **8-1** 三段课程分别是什么？为什么 LingoQA 排在最前？
-<sub>考点：stage1_lingoqa（通用 VQA，先建立视觉-语言对齐）→ stage1_nav（驾驶推理 + 轨迹 token）
-→ stage2_nav（冻结 VLM，训 expert）</sub>
+<sub>考点：stage1_lingoqa（通用 VQA，先建立视觉-语言对齐）→ stage1_nav（**未来轨迹的离散 token**）
+→ stage2_nav（冻结 VLM，训 expert）。
+⚠️ nav 阶段**没有** CoC 监督（`label_components` 只有 `traj_future`）——
+别答成「驾驶推理 + 轨迹」</sub>
 
 **8-2** `lr_multiplier: {vlm.model.visual: 0.1}` —— 为什么**视觉塔**只给 1/10 学习率？
-<sub>考点：视觉特征来自预训练、最通用也最容易被打坏；驾驶数据规模远小于预训练，
-大 lr 会把 ViT 拉偏。语言塔要学新的 CoC 表达，得给足 lr</sub>
+<sub>考点：视觉特征来自预训练、最通用也最容易被打坏；**驾驶数据规模远小于预训练**，
+大 lr 会把 ViT 拉偏、丢掉通用视觉能力。语言塔要学**新的轨迹 token 表达**，得给足 lr</sub>
 
 **8-3** 如果同时写了 `{vlm: 0.5, vlm.model.visual: 0.1}`，视觉塔的参数会用哪个倍率？
 <sub>考点：**最长前缀匹配**——用更长的那条（0.1）</sub>
 
 **8-4** `stage1_vlm_checkpoint_path` 交接时，哪些权重被换掉、哪些保持原样？
 <sub>考点：只换 VLM；expert 保持发布模型（`nvidia/Alpamayo-1.5-10B`）里那份。
-（RL 那条线反过来：只导出 VLM，拿回 SFT 时 expert 随机初始化）</sub>
+这题问的是 **Flow A**（起点是完整模型，含 expert）。
+⚠️ 别套到 **Flow B**（起点是 RL checkpoint，只有 VLM）——那条路上 expert 是随机初始化的</sub>
 
 ---
 
@@ -848,6 +851,73 @@ label_components:   ["traj_future"]        # ← 只有这一段算 loss
 
 > 所以「从随机噪声开始」不是锦上添花，而是——
 > **它是唯一的多样性来源。起点就是「采样」这个动作本身。**
+
+**8-1** 三段是：
+
+| 阶段 | 数据 | 训什么 | 监督 |
+|---|---|---|---|
+| `stage1_lingoqa` | LingoQA（VQA） | VLM | **自由文本 answer** |
+| `stage1_nav` | PAI nav | VLM | **未来轨迹的离散 token** |
+| `stage2_nav` | PAI nav | expert（VLM 冻结） | 连续 action（flow matching） |
+
+**LingoQA 排最前的理由**：它训的是「**看图 + 问题 → 自由文本回答**」，
+也就是**视觉-语言对齐**——让模型先把「图里的东西」和「文字」连起来。
+这是**最基础、最容易学**的一段，而且没有轨迹预测那部分负担。
+
+先解决「怎么把图说成话」，再进 nav 学「图 + 历史 + 导航 → 未来轨迹」这个**具体领域任务**。
+
+⚠️ **nav 阶段没有 CoC 监督**（`label_components` 只有 `traj_future`）。
+别答成「驾驶推理（CoC）+ 轨迹」——CoC 能力继承自发布 checkpoint，
+Alpamayo **1** 的 recipe 里 CoC 才是可选项（见 README「CoC 到底在哪」）。
+
+**8-2** 两个理由，**第二个才是根本**：
+
+1. **视觉特征最通用，也最容易被打坏**——它是从预训练来的，已经很好用了
+2. **驾驶数据规模远小于预训练数据** ← 这才是关键
+
+大 lr 会让 ViT **在小数据集上过拟合**，把预训练学到的通用视觉能力**冲掉**。
+（不是"它不够好需要重训"，恰恰相反——是"它太好了，别弄坏"。）
+
+**语言塔反过来**：它要学**新的轨迹 token 表达**，训练数据只覆盖这个新任务，
+所以必须给足 lr。
+
+**8-3** **`vlm.model.visual` 那条 → 倍率 `0.1`。**
+
+规则是**最长前缀优先**（`trainer.py:58 create_optimizer`）：
+
+```python
+for prefix in lr_multiplier.keys():
+    if name.startswith(prefix):
+        if matched_prefix is None or len(prefix) > len(matched_prefix):
+            matched_prefix = prefix      # ★ 取更长的
+```
+
+参数 `vlm.model.visual.blocks.0.attn.qkv.weight` **同时匹配** `vlm` 和 `vlm.model.visual`，
+取更长的 `vlm.model.visual` → **0.1**。
+
+意义：**写得越具体越优先**，允许「先给一大片设一个倍率，再给其中一小块单独调」。
+
+**8-4** **VLM 被覆盖，expert 保持原样**——toy 实测：
+
+```
+注入前 VLM 权重 vs stage1      4.8758   ← 随机初始化的差距
+注入后 VLM 权重 vs stage1      0.0000   ← 完全一致 ✓
+expert 权重（注入前后）         0.0000   ← expert 没被动过 ✓
+```
+
+⚠️ **但这题问的是 `Flow A`**（起点是 `nvidia/Alpamayo-1.5-10B`，**含 expert**）：
+
+```
+Flow A（stage1 → stage2）
+    起点 = 完整发布模型（含 expert）
+    结果 = 新 VLM  +  【发布模型那份】expert
+
+Flow B（RL checkpoint → stage2）
+    起点 = RL 导出的 checkpoint（【只有 VLM 权重】）
+    结果 = RL 训的 VLM  +  【随机初始化】expert
+```
+
+**「expert 随机初始化」只对 Flow B 成立**——别套到这题的 Flow A 上。
 
 </details>
 
