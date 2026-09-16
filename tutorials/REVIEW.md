@@ -641,6 +641,33 @@ labels shape: (2, 3)
 
 真实 ML 里这条对应的就是**训练集指标 vs 测试集指标**，是同一个道理。
 
+**5d-1** 是**诊断**——为了看出「哪一段在拖后腿」。看实际输出：
+
+```
+  step   0: total=8.6657  trajectory=4.0171  others=4.6486
+  step 100: total=0.1870  trajectory=0.1774  others=0.0096   ← others 已降到底
+  step 300: total=0.1522  trajectory=0.1499  others=0.0023   ← traj 还很高
+  step 600: total=0.0011  trajectory=0.0006  others=0.0005
+```
+
+step 100~300 那段：`others`（CoC 文本）**100 步就学会了**，
+而 `trajectory`（轨迹 token）到 **300 步**还停在 0.1499 —— **两段学习速度差十几倍**。
+
+只看 `total` 你只知道"在降"，**看不出是哪一段慢**；分开打印立刻能定位到**轨迹段是瓶颈**。
+
+> ⚠️ 别和 `3-1/3-2` 搞混：那两题问的是「**为什么分段算**」（数学上 `mean(A)+mean(B) ≠ mean(A∪B)`）；
+> 这题问的是「**为什么分开打印**」（工程上的可观测性）。真实训练里 wandb 那堆
+> `train/loss_*` 就是干这个的。
+
+**5d-2** **不等同。** toy 为了教学保留 CoC（让序列里有两段可对比），
+但 1.5 的 `nav.yaml` 默认**只把 `traj_future` 放进 components/labels**，序列里没有 CoC。
+
+⚠️ 两个限定，别说岔：
+
+- 准确说法是「**1.5 的 `nav.yaml` 不含 CoC**」，不是「本仓库不训 CoC」
+- 因为 **Alpamayo 1** 的 recipe 里 CoC 是**可选项**（`coc.yaml`，默认关，要额外配数据集）；
+  **1.5 的 recipe** 连这个选项都没有。详见 README「CoC 到底在哪」一节
+
 </details>
 
 <details>
