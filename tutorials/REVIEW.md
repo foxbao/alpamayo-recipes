@@ -813,6 +813,42 @@ CoC 固定成 `turn left`，**只换前缀里的答案**：
 
 （看表也能验证：`False + False` 和 `False + True` 两行**一字不差**。）
 
+**7d-1** **阶段一 = 离散轨迹 token 的 next-token CE；阶段二 = 连续 action 的 flow-matching MSE**
+（VLM 只提供条件）。
+
+⚠️ **别把「reasoning 真值」算进阶段一**——这是最容易带进来的旧印象。
+1.5 的 `nav.yaml` 原样：
+
+```yaml
+components_order:   ["image", "traj_history", "route", "prompt", "traj_future"]
+label_components:   ["traj_future"]        # ← 只有这一段算 loss
+```
+
+`components_order` 里**没有 `cot`**，序列里**根本没有 CoC 那一段**，谈不上 reasoning 监督。
+
+> **记牢**：**1.5 的 nav 只训轨迹；CoC 能力继承自发布 checkpoint。**
+> （Alpamayo **1** 的 recipe 里 CoC 才是可选项——见 README「CoC 到底在哪」。）
+
+**7d-2** 因为 expert 学的是**从噪声到数据的路径**（`x_t = (1-t)·x0 + t·x1`），
+所以推理必须**从同一个噪声分布里采起点**（`x0 ~ N(0,1)`）。
+
+完整的因果链：
+
+```
+① expert 学的是【从噪声到数据的路径】
+② 所以推理必须【从同一个噪声分布里采起点】
+③ 积分本身【完全确定】（6-3 已确认）
+④ ⟹ 多样性【只来自起点】，没有别的来源
+```
+
+⚠️ **别答成「为了增加随机性」**——那是在说「积分过程有随机性」，而它**没有**（那是 6-3）。
+
+**反过来说**：每次都从**同一个**起点出发 → 每次得到**完全相同**的轨迹
+→ expert 退化成「确定性回归」，**一次只能出一条轨迹**。
+
+> 所以「从随机噪声开始」不是锦上添花，而是——
+> **它是唯一的多样性来源。起点就是「采样」这个动作本身。**
+
 </details>
 
 <details>
