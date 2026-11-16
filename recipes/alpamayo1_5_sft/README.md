@@ -2,6 +2,12 @@
 
 This guide covers supervised fine-tuning (SFT) for Alpamayo 1.5 with navigation conditioning and LingoQA VQA. The SFT scripts live under [recipes/alpamayo1_5_sft](./).
 
+For the local front/rear recording dataset and approved CoC labels, see the
+[local CoC training guide](./LOCAL_COC_TRAINING.md) and use
+[`scripts/run_local_coc_sft.sh`](./scripts/run_local_coc_sft.sh). The launcher
+keeps data, checkpoint, GPU count, and output paths in environment variables so
+it can be copied to a separate training server.
+
 Alpamayo 1.5 extends Alpamayo 1 with two new capabilities trained as Stage-1 (VLM) SFT tasks:
 
 - **Navigation conditioning** — trajectory prediction guided by route instructions (e.g. "Turn left in 40m")
