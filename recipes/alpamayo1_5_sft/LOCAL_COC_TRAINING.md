@@ -12,6 +12,8 @@
 4. 从 CoC 标注仓库复制过来的正式标签版本目录。每个版本至少要保留 `manifest.json` 和 `annotations.jsonl`；建议完整复制整个 `versions/vNNN/` 目录。
 5. 与依赖匹配的 GPU 环境。官方 recipe 使用 `uv`，要求 Python 3.12；请按本目录 README 建立 `a1_5_sft` 环境并执行 `uv sync --active`。
 
+建议把本机数据、正式标签版本和 checkpoint 通过软连接统一挂到仓库根目录的 `data/local_coc/`。目录结构和 A800 上的重建方法见 [`data/local_coc/README.md`](../../data/local_coc/README.md)。这些软连接不会提交到 Git；每台机器使用自己的存储路径。
+
 Git 同步只会带来代码，不会带来被 `.gitignore` 排除的本地数据、模型权重或 `outputs/.../formal_labels/` 产物。请通过数据盘、共享存储或受控文件传输把三类文件分别放到服务器上，并核对容量和路径。
 
 如果两台机器可以通过 SSH 互通，可以按实际用户名和主机名复制这两组样本及其正式标签版本。正式标签目录要保留版本目录本身，不要只拷贝 JSONL：
@@ -60,15 +62,15 @@ cd /path/to/alpamayo-recipes/recipes/alpamayo1_5_sft
 source a1_5_sft/bin/activate
 ```
 
-设置数据根目录、训练/验证正式版本和 checkpoint。正式版本可以填写一个或多个路径，多个路径用逗号分隔；路径中不要包含逗号。训练集与验证集必须使用不同的完整 `record` 或数据组，不能把同一记录的相邻事件随机拆开。
+设置数据根目录、训练/验证正式版本和 checkpoint。可以直接使用仓库 `data/local_coc/` 下的软连接。正式版本也可以填写一个或多个路径，多个路径用逗号分隔；路径中不要包含逗号。训练集与验证集必须使用不同的完整 `record` 或数据组，不能把同一记录的相邻事件随机拆开。
 
 例如，当前两组数据可以按组留出：用 `20261019_lin_007_out` 的 9 条训练，用 `20261111_BB_008_out` 的 24 条验证。标签路径须在服务器上实际存在：
 
 ```bash
-export LOCAL_COC_SAMPLE_ROOT=/data/vla_kl/sample
-export LOCAL_COC_TRAIN_VERSIONS=/data/formal_labels/20261019_lin_007_out/policy_v010/v002
-export LOCAL_COC_VAL_VERSIONS=/data/formal_labels/20261111_BB_008_out/policy_v001/v001
-export ALPAMAYO_A1_CHECKPOINT=/models/Alpamayo-1.5-10B-A1-format
+export LOCAL_COC_SAMPLE_ROOT="$PWD/data/local_coc/sample"
+export LOCAL_COC_TRAIN_VERSIONS="$PWD/data/local_coc/train_labels"
+export LOCAL_COC_VAL_VERSIONS="$PWD/data/local_coc/val_labels"
+export ALPAMAYO_A1_CHECKPOINT="$PWD/data/local_coc/checkpoint"
 export NPROC_PER_NODE=8
 export LOCAL_COC_OUTPUT_DIR=/data/training_runs/local_coc_stage1/run_001
 ```
