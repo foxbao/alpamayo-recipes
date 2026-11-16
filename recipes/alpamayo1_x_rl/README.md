@@ -240,6 +240,11 @@ Then set the [TOML config](./toml/alpamayo_rvla_rl_local_test_with_reasoning.tom
 | `reasoning_grading_device`     | Device for the grader (`"auto"`, `"cpu"`, `"cuda:0"`)    |
 | `reward.reasoning_weight`      | Weight for reasoning reward (`[custom.alpamayo.reward]`) |
 
+The joint reward uses a strict reasoning gate at `reasoning_score > -0.4`, where
+`reasoning_score = grader_score - 1`. For accepted samples, the reasoning term
+is normalized as `(reasoning_score - (-0.4)) / (0 - (-0.4))`, so a score just at
+the threshold contributes `0` and a perfect grader score contributes `1`.
+
 Launch training with the reasoning-labeled dataset from step 5 (`--only-reasoning-chunks`):
 
 ```bash
@@ -367,7 +372,7 @@ and combines them into a single scalar:
 | Component   | How it is computed                                                                 | Weight key in TOML |
 | ----------- | ---------------------------------------------------------------------------------- | ------------------ |
 | **ADE**     | Average Displacement Error (L2) between predicted and ground-truth trajectory (XY) | `traj_l2_weight`   |
-| **Comfort** | Fraction of timesteps within comfort bounds (acceleration, jerk, yaw rate, etc.)   | `comfort_weight`   |
+| **Comfort** | For each metric, all timesteps must stay within bounds; the six pass/fail scores are averaged | `comfort_weight`   |
 
 The reward uses a gated structure: if ADE exceeds a threshold (default 3.0 m),
 the reward is clamped to −1. Otherwise it is a weighted combination of
@@ -500,8 +505,10 @@ reasoning_text = to_be_evaluated.split("<|cot_end|>")[0]
 ```
 
 You can then score it with a custom reasoning reward (e.g., an LLM-based
-grader, rule-based checks, or a learned reward model). We will soon release
-reasoning labels and a corresponding reasoning reward function.
+grader, rule-based checks, or a learned reward model). This repository also
+includes an example joint reward in
+[`rewards/aggregated_reward_with_reasoning.py`](rewards/aggregated_reward_with_reasoning.py)
+and a matching entry script/config for the released reasoning-labeled subset.
 
 </details>
 

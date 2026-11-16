@@ -27,10 +27,17 @@ _REQUIRED_REWARD_KEYS: list[str] = [
 ]
 
 
+def normalize_reasoning_score(reasoning_score: float, threshold: float = -0.4) -> float:
+    """Map the accepted reasoning-score interval ``[threshold, 0]`` to ``[0, 1]``."""
+    if threshold >= 0.0:
+        raise ValueError("reasoning threshold must be negative")
+    return (reasoning_score - threshold) / (0.0 - threshold)
+
+
 def _get_reward_cfg(config: object | None) -> dict[str, float]:
     """Extract reward parameters from Cosmos TOML [custom.alpamayo.reward]."""
     try:
-        reward_cfg = getattr(config, "custom")["alpamayo"]["reward"]
+        reward_cfg = config.custom["alpamayo"]["reward"]
     except (TypeError, KeyError, AttributeError) as e:
         raise ValueError(
             "Reward config not found in TOML. "
@@ -60,12 +67,11 @@ def compute_reward(
     CoT when both are present, and adds the weighted reasoning component (or a
     penalty when CoT is missing after decode).
     """
-    from alpamayo_r1.models.token_utils import extract_between_special_tokens
     from alpamayo1_x_rl.rewards.comfort_reward import compute_comfort
-    from cosmos_rl.utils.logging import logger  # pyright: ignore[reportMissingImports]
-
     from alpamayo1_x_rl.rewards.traj_reward import calculate_ade
     from alpamayo1_x_rl.utils.trajectory_decode import decode_rollout_trajectory
+    from alpamayo_r1.models.token_utils import extract_between_special_tokens
+    from cosmos_rl.utils.logging import logger  # pyright: ignore[reportMissingImports]
 
     w = _get_reward_cfg(config)
 
@@ -104,7 +110,9 @@ def compute_reward(
         raw_score = float(grader.score(pred_cot, gt_cot).item())
         reasoning_score = raw_score - 1.0
 
-    # Continuous reward: each component contributes independently, no hard gates.
+    # Both trajectory and CoT quality must pass their thresholds before the
+    # weighted reward components are combined; otherwise return the fixed
+    # penalty used by the motion-only reward.
     ade_threshold = 3.0
     reasoning_threshold = -0.4
     pred_cot_decoded = bool(pred_cot and len(pred_cot.strip()) > 0)
@@ -113,7 +121,8 @@ def compute_reward(
         final_reward = (
             -w["traj_l2_weight"] * (l2_dist / ade_threshold)
             + w["comfort_weight"] * comfort_score
-            + w["reasoning_weight"] * (reasoning_score / reasoning_threshold)
+            + w["reasoning_weight"]
+            * normalize_reasoning_score(reasoning_score, reasoning_threshold)
         )
     else:
         final_reward = -1.0
