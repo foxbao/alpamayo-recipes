@@ -89,7 +89,7 @@ where you cannot ask the user, halt and report rather than guess.
 |-------|-----------------|-----------------------------------|
 | **PAI chunk range** (e.g. `0-10`) | Sets both the `download_pai.py --chunk-ids` flag and the Hydra `data.{train,val}_dataset.chunk_ids` overrides. For full-scale runs use `0-99`; for smoke tests `0-1` (single chunk). | Ask explicitly; do not assume |
 | **Train / val split inside that range** (e.g. train `0-9`, val `9-10`) | The recipe wants distinct train/val chunk ranges within what you've downloaded. For a single-chunk smoke test, both sides use the same range. | train = all but last, val = last |
-| **CoC reasoning labels enabled?** (`yes` / `no`) | Toggles the `components_order` / `components_prompt` / `label_components` lists in [configs/vla_processor/default.yaml](configs/vla_processor/default.yaml) and triggers the reasoning-label download path. | `no` |
+| **CoC reasoning labels enabled?** (`yes` / `no`) | Selects [configs/sft_stage1_coc.yaml](configs/sft_stage1_coc.yaml), which switches the processor to `coc.yaml`, and triggers the reasoning-label download path. | `no` |
 | **W&B logging?** (`yes` / `no`) | If `yes`, also collect: `WANDB_API_KEY`, `team`, `project`. If `no`, agent sets `WANDB_MODE=disabled` and leaves the shipped config (`report_to: none`) untouched. | `no` |
 | **Stage(s) to run** (`stage1` / `stage2` / `both` / `eval`) | Determines which `torchrun -m alpamayo1_sft.train_hf --config-name ...` (and/or `evaluate_hf`) invocations the agent issues. | `both` then `eval` |
 | **PAI dataset directory** | Used as `--output-dir` for `download_pai.py` and as `data.{train,val}_dataset.local_dir`. | Ask — no safe default |
@@ -351,13 +351,14 @@ dramatic loss drop**. The numbers above confirm the run is wired correctly
 
 ### Enable CoC reasoning (Stage 1)
 
-Apply this **only if** `$ENABLE_COC = yes`. Three pieces must all be in place
+Apply this **only if** `$ENABLE_COC = yes`. Four pieces must all be in place
 — miss any one and the run aborts with
 `AssertionError: cot not found in data but 'cot' in components_order`.
 
-**1. Processor side** — edit
-[configs/vla_processor/default.yaml](configs/vla_processor/default.yaml)
-**before** launching Stage 1:
+**1. Processor side** — select
+[configs/sft_stage1_coc.yaml](configs/sft_stage1_coc.yaml) as the Stage 1 config.
+It overrides the processor with [configs/vla_processor/coc.yaml](configs/vla_processor/coc.yaml),
+so no manual edit to `default.yaml` is required:
 
 ```yaml
 components_order:   ["image", "traj_history", "prompt", "cot", "traj_future"]
@@ -736,7 +737,7 @@ without it, `InstantiationException` hides the real cause behind a one-liner.
 |---------|------------|-----|
 | `InstantiationException("Error locating target 'alpamayo.processor.qwen_processor.get_preprocess_data_fn_from_model_config'")` | The installed `alpamayo-recipes` doesn't export that symbol — the venv is stale or wasn't fully synced | Verify with `python -c "from alpamayo.processor.qwen_processor import get_preprocess_data_fn_from_model_config"`; re-run `uv sync --active` |
 | `InstantiationException` on `alpamayo.data.pai.PAIDataset` | The `alpamayo-recipes` editable install (`../../src`) didn't take | `uv pip show alpamayo-recipes` → re-run `uv sync --active` |
-| `AssertionError: cot not found in data but 'cot' in components_order` | You enabled CoC on the processor (`vla_processor/default.yaml`) but didn't wire the dataset side (`reasoning_metadata` + `clip_index_metadata` + `use_default_keyframe=false`) | See [Enable CoC reasoning (Stage 1)](#enable-coc-reasoning-stage-1) — all **four** pieces (processor config, dataset on disk with `--num-reasoning-clips`, dataset config pointing at the filtered index, default-keyframe disabled) must be set together |
+| `AssertionError: cot not found in data but 'cot' in components_order` | You selected `sft_stage1_coc.yaml` but didn't wire the dataset side (`reasoning_metadata` + `clip_index_metadata` + `use_default_keyframe=false`) | See [Enable CoC reasoning (Stage 1)](#enable-coc-reasoning-stage-1) — all **four** pieces (processor config, dataset on disk with `--num-reasoning-clips`, dataset config pointing at the filtered index, default-keyframe disabled) must be set together |
 | `Key 'reasoning_metadata' is not in struct ... Could not override 'data.train_dataset.reasoning_metadata'` | Hydra struct mode rejects setting keys that aren't in the shipped YAML | Prefix the override with `+` to **append** rather than override: `+data.train_dataset.reasoning_metadata=...`. Same for `clip_index_metadata` and any other key not already in `sft_base.yaml` |
 | `ValueError: Event timestamp 5100000 not found for <clip_id> in reasoning_db` | CoC is enabled and `reasoning_metadata` is wired, but `use_default_keyframe: true` is still in effect — `t0_us` is forced to the global 5.1 s keyframe, which doesn't match the per-clip reasoning event timestamps | Override `data.train_dataset.use_default_keyframe=false` and `data.val_dataset.use_default_keyframe=false` (no `+` — the key is already in `sft_base.yaml`). See [Enable CoC reasoning (Stage 1)](#enable-coc-reasoning-stage-1) |
 | `wandb.errors.CommError: 403 ... permission denied ... upsertBucket` | Account not in the wandb entity/project from `configs/wandb/default.yaml` | Change `team`/`project`, override on CLI, or `WANDB_MODE=disabled` |

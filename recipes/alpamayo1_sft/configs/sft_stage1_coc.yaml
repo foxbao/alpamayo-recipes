@@ -1,0 +1,35 @@
+# Stage 1 with chain-of-causation (CoC) reasoning labels.
+#
+# This is intentionally a separate config instead of asking readers to edit
+# vla_processor/default.yaml. The dataset metadata and the processor must be
+# enabled together for the run to produce cot labels.
+defaults:
+  - sft_base
+  - /models/ar1_base@model
+  - override /vla_processor@data.train_dataset.vla_preprocess_args: coc
+  - override /vla_processor@data.val_dataset.vla_preprocess_args: coc
+  - _self_
+
+trainer:
+  lr_multiplier:
+    vlm.model.visual: 0.1
+  ddp_find_unused_parameters: false
+  gradient_accumulation_steps: 4
+  learning_rate: 1e-5
+  warmup_steps: 500
+
+paths:
+  output_dir: output_stage1_coc
+
+evaluate:
+  eval_ckpt: null
+
+task_name: alpamayo_1_sft_stage1_coc
+
+# The reasoning mini index already selects the clips. Do not apply the
+# ordinary 0-99 chunk range to it; reasoning clips may come from other chunks.
+data:
+  train_dataset:
+    chunk_ids: null
+  val_dataset:
+    chunk_ids: null

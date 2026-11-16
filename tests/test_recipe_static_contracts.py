@@ -66,8 +66,10 @@ def test_alpamayo1_sft_stage_configs_preserve_training_contract() -> None:
     readme = recipe_dir / "README.md"
     base = _load_yaml(recipe_dir / "configs" / "sft_base.yaml")
     stage1 = _load_yaml(recipe_dir / "configs" / "sft_stage1.yaml")
+    stage1_coc = _load_yaml(recipe_dir / "configs" / "sft_stage1_coc.yaml")
     stage2 = _load_yaml(recipe_dir / "configs" / "sft_stage2.yaml")
     processor = _load_yaml(recipe_dir / "configs" / "vla_processor" / "default.yaml")
+    coc_processor = _load_yaml(recipe_dir / "configs" / "vla_processor" / "coc.yaml")
     base_model = _load_yaml(recipe_dir / "configs" / "models" / "ar1_base.yaml")
     expert_model = _load_yaml(recipe_dir / "configs" / "models" / "ar1_expert.yaml")
 
@@ -77,6 +79,7 @@ def test_alpamayo1_sft_stage_configs_preserve_training_contract() -> None:
             "-m alpamayo1_sft.train_hf",
             "-m alpamayo1_sft.evaluate_hf",
             "--config-name sft_stage1",
+            "--config-name sft_stage1_coc",
             "--config-name sft_stage2",
             "+data.train_dataset.reasoning_metadata",
             "+data.train_dataset.clip_index_metadata",
@@ -85,6 +88,19 @@ def test_alpamayo1_sft_stage_configs_preserve_training_contract() -> None:
     )
 
     assert "/models/ar1_base@model" in stage1["defaults"]
+    assert "/models/ar1_base@model" in stage1_coc["defaults"]
+    assert _defaults_include_override(
+        stage1_coc,
+        "override /vla_processor@data.train_dataset.vla_preprocess_args",
+        "coc",
+    )
+    assert _defaults_include_override(
+        stage1_coc,
+        "override /vla_processor@data.val_dataset.vla_preprocess_args",
+        "coc",
+    )
+    assert stage1_coc["data"]["train_dataset"]["chunk_ids"] is None
+    assert stage1_coc["data"]["val_dataset"]["chunk_ids"] is None
     assert "/models/ar1_expert@model" in stage2["defaults"]
     assert base["data"]["collate_fn"]["chat_template_version"] == "r1"
     assert base["data"]["train_dataset"]["_target_"] == "alpamayo.data.pai.PAIDataset"
@@ -98,6 +114,15 @@ def test_alpamayo1_sft_stage_configs_preserve_training_contract() -> None:
     assert processor["chat_template_version"] == "r1"
     assert processor["components_order"] == ["image", "traj_history", "prompt", "traj_future"]
     assert processor["label_components"] == ["traj_future"]
+    assert coc_processor["components_order"] == [
+        "image",
+        "traj_history",
+        "prompt",
+        "cot",
+        "traj_future",
+    ]
+    assert coc_processor["components_prompt"] == ["cot", "traj_future"]
+    assert coc_processor["label_components"] == ["cot", "traj_future"]
     assert base_model["_target_"].endswith("TrainableReasoningVLA.from_alpamayo_checkpoint")
     assert expert_model["pretrained_model_name_or_path"] == "nvidia/Alpamayo-R1-10B"
     assert expert_model["cotrain_vlm"] is False

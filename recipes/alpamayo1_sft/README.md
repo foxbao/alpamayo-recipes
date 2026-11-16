@@ -145,9 +145,20 @@ Example log lines:
 
 ### Stage 1 (CoC reasoning enabled)
 
-Note that in the sample scenario provided above, CoC labels are not used. Enabling CoC requires **two** pieces to be in sync — miss any one and the run aborts with either `AssertionError: cot not found in data but 'cot' in components_order` or `ValueError: Event timestamp 5100000 not found for <clip_id> in reasoning_db`.
+Note that in the sample scenario provided above, CoC labels are not used. This
+repository includes a dedicated [`configs/sft_stage1_coc.yaml`](configs/sft_stage1_coc.yaml)
+that selects the CoC processor automatically. Using a separate config keeps the
+processor and model choice visible in the launch command; you do not need to
+edit `vla_processor/default.yaml` by hand.
 
-**1. Processor config** — update [configs/vla_processor/default.yaml](./configs/vla_processor/default.yaml):
+CoC still requires the dataset metadata and the processor to be in sync. The
+run aborts with either `AssertionError: cot not found in data but 'cot' in
+components_order` or `ValueError: Event timestamp 5100000 not found for
+<clip_id> in reasoning_db` when the reasoning files or keyframe setting are
+wrong.
+
+**1. Processor config** — `sft_stage1_coc.yaml` selects
+[configs/vla_processor/coc.yaml](./configs/vla_processor/coc.yaml), whose labels are:
 
 ```yaml
 components_order: ["image", "traj_history", "prompt", "cot", "traj_future"]
@@ -161,7 +172,7 @@ label_components: ["cot", "traj_future"]
 torchrun --nproc_per_node 8 \
   -m alpamayo1_sft.train_hf \
   --config-path pkg://alpamayo1_sft/configs \
-  --config-name sft_stage1 \
+  --config-name sft_stage1_coc \
   model.checkpoint_path=<path/to/Alpamayo-R1-10B> \
   data.train_dataset.local_dir=<path/to/pai_dataset> \
   data.val_dataset.local_dir=<path/to/pai_dataset> \
