@@ -1,5 +1,9 @@
 # Alpamayo 训练教程（从零理解 SFT）
 
+如果你要从 toy 教程进入真实训练，先读
+[真实训练路线](./REAL_TRAINING.md)。它集中说明真实环境、模型转换、训练数据、启动命令，
+以及当前 8×RTX 4090 机器的显存限制；下面的教程仍然负责解释训练代码本身。
+
 配合本仓库 `recipes/alpamayo1_5_sft/` 的真实代码，一步步手写并理解 Alpamayo 的训练。
 
 > 前置：建议先完成 `alpamayo1.5/tutorials/` 的**推理教程**（stage0~15），理解 VLA 的架构。
@@ -317,7 +321,7 @@ recipes/
 | | Alpamayo **1** recipe | Alpamayo **1.5** recipe |
 |---|---|---|
 | CoC 作为 Stage-1 监督目标 | ✅ **支持，但 opt-in** | ❌ **没有这个选项** |
-| 怎么开 | 把 `default.yaml` 换成 `coc.yaml` 的三个列表 + 数据集侧三件套 | — |
+| 怎么开 | 使用 `configs/sft_stage1_coc.yaml`（它自动选择 `coc.yaml`）+ 数据集侧三件套 | — |
 | 默认值 | **关**（`ENABLE_COC=no`） | — |
 
 **证据（都在 `alpamayo1_sft/`）**：
