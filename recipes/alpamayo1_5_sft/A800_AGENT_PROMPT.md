@@ -11,7 +11,7 @@
 当前 `alpamayo-recipes` 已同步到 commit：
 
 ```text
-6457ee417327290a6e1742dcebcef12b426c9c9a
+3b4bfd768f87be294fecdb72f4874dbbc3639e44
 ```
 
 本次任务是使用 VLA-KL 数据进行 Alpamayo-1.5 Stage-1 CoC SFT 训练。不要重新下载数据或模型，不要修改原始 checkpoint，不要改动 Alpamayo 源代码。
