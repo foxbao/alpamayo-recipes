@@ -8,11 +8,7 @@
 4. `data/vla_kl/README.md`
 5. `recipes/alpamayo1_5_sft/scripts/run_local_coc_sft.sh`
 
-当前 `alpamayo-recipes` 已同步到 commit：
-
-```text
-3b4bfd768f87be294fecdb72f4874dbbc3639e44
-```
+开始前请执行 `git rev-parse HEAD`，确认本地仓库已与远程 `main` 同步；不要使用过期的本地 commit。
 
 本次任务是使用 VLA-KL 数据进行 Alpamayo-1.5 Stage-1 CoC SFT 训练。不要重新下载数据或模型，不要修改原始 checkpoint，不要改动 Alpamayo 源代码。
 
