@@ -6,8 +6,8 @@ dist/
 outputs/*
 *.egg-info
 output_stage*
-data/local_coc/sample
-data/local_coc/train_labels
-data/local_coc/val_labels
-data/local_coc/checkpoint
+data/vla_kl/sample
+data/vla_kl/train_labels
+data/vla_kl/val_labels
+data/vla_kl/checkpoint
 *.egg-info
